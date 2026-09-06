@@ -8,6 +8,7 @@
 # Environment:
 #   CODESIGN_IDENTITY  "Developer ID Application: ..." identity. Unset: ad-hoc signing.
 #   NOTARY_PROFILE     notarytool keychain profile. Only used when CODESIGN_IDENTITY is set.
+#   UNIVERSAL=1        build for both Apple silicon and Intel (used for releases).
 set -euo pipefail
 cd "$(dirname "$0")"
 
@@ -38,20 +39,27 @@ if (( RUN_TESTS )); then
 fi
 
 # 2. Compile
-echo "==> swift build -c release"
-if ! swift build -c release > build/swift-build.log 2>&1; then
+if [[ "${UNIVERSAL:-0}" == "1" ]]; then
+  ARCH_FLAGS=(--arch arm64 --arch x86_64)
+  BINARY=.build/apple/Products/Release/Vitals
+else
+  ARCH_FLAGS=()
+  BINARY=.build/release/Vitals
+fi
+echo "==> swift build -c release ${ARCH_FLAGS[*]:-}"
+if ! swift build -c release "${ARCH_FLAGS[@]}" > build/swift-build.log 2>&1; then
   cat build/swift-build.log >&2
   echo "build failed" >&2
   exit 1
 fi
 grep -E "error|warning: unre|Compiling|Build complete" build/swift-build.log || true
-[[ -x .build/release/Vitals ]] || { echo "build failed: .build/release/Vitals missing" >&2; exit 1; }
+[[ -x "$BINARY" ]] || { echo "build failed: $BINARY missing" >&2; exit 1; }
 
 # 3. Assemble bundle
 echo "==> assemble $APP"
 rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
-cp .build/release/Vitals "$APP/Contents/MacOS/Vitals"
+cp "$BINARY" "$APP/Contents/MacOS/Vitals"
 cp Info.plist "$APP/Contents/Info.plist"
 cp "$ICON" "$APP/Contents/Resources/AppIcon.icns"
 printf 'APPL????' > "$APP/Contents/PkgInfo"
