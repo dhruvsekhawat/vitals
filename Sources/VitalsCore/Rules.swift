@@ -313,10 +313,18 @@ public struct AppUsage: Identifiable, Sendable, Equatable {
             if Rules.isKnownBusy(p.name) { g.busy += p.cpuNow }
             groups[k] = g
         }
-        return groups.map { AppUsage(name: $0.key, procs: $0.value.n, cpu: $0.value.cpu, busyCPU: $0.value.busy, rss: $0.value.rss, pids: $0.value.pids.sorted(), isBundle: $0.value.bundle) }
-            .filter { $0.cpu >= 1 || $0.rss >= 500 * 1_048_576 }
-            .sorted { ($0.cpu, $0.rss) == ($1.cpu, $1.rss) ? $0.name < $1.name : ($0.cpu, $0.rss) > ($1.cpu, $1.rss) }
-            .prefix(limit).map { $0 }
+        var usages: [AppUsage] = []
+        usages.reserveCapacity(groups.count)
+        for (name, g) in groups where g.cpu >= 1 || g.rss >= 500 * 1_048_576 {
+            usages.append(AppUsage(name: name, procs: g.n, cpu: g.cpu, busyCPU: g.busy, rss: g.rss, pids: g.pids.sorted(), isBundle: g.bundle))
+        }
+        // Busiest first; ties broken by memory, then name so rows do not reorder between samples.
+        usages.sort { a, b in
+            if a.cpu != b.cpu { return a.cpu > b.cpu }
+            if a.rss != b.rss { return a.rss > b.rss }
+            return a.name < b.name
+        }
+        return Array(usages.prefix(limit))
     }
 
     static func groupName(_ p: Proc) -> (String, Bool) {
