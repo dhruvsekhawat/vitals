@@ -1,79 +1,110 @@
-# Vitals
+<p align="center">
+  <img src="docs/banner.png" alt="The real terminal output that started Vitals: two Cursor renderer processes at 99% CPU for nineteen days, and what Vitals says about it." width="100%">
+</p>
 
-A menu bar app for macOS that tells you what is eating your Mac, in plain language, and fixes it in one click.
+<p align="center">
+  <a href="https://github.com/dhruvsekhawat/vitals/releases/latest"><img alt="Latest release" src="https://img.shields.io/github/v/release/dhruvsekhawat/vitals?display_name=tag&style=flat-square&color=34b866"></a>
+  <a href="https://github.com/dhruvsekhawat/vitals/actions/workflows/ci.yml"><img alt="CI" src="https://img.shields.io/github/actions/workflow/status/dhruvsekhawat/vitals/ci.yml?branch=main&style=flat-square&label=tests"></a>
+  <img alt="macOS 14+" src="https://img.shields.io/badge/macOS-14%2B-000000?style=flat-square&logo=apple&logoColor=white">
+  <img alt="Apple silicon and Intel" src="https://img.shields.io/badge/chip-Apple%20silicon%20%7C%20Intel-555?style=flat-square">
+  <img alt="Swift" src="https://img.shields.io/badge/Swift-5.9-F05138?style=flat-square&logo=swift&logoColor=white">
+  <img alt="Notarized" src="https://img.shields.io/badge/signed-Developer%20ID%20%2B%20notarized-34b866?style=flat-square">
+  <a href="LICENSE"><img alt="MIT" src="https://img.shields.io/badge/license-MIT-blue?style=flat-square"></a>
+</p>
 
-![The Vitals panel](docs/panel.png)
-
-## Why this exists
-
-My laptop was hot, the fans were loud, and it felt slow for weeks. Activity Monitor showed hundreds of processes and no obvious answer. The actual causes turned out to be two Cursor renderer processes that had been pinned at 100% CPU for nineteen days, forty-odd Claude Code helper processes leaked by sessions that had long since closed, swap at 97% full, and no restart in forty-one days. None of that is hard to find if you know which command to run. Vitals runs those commands for you, every few seconds, and only speaks up when something is actually wrong.
-
-## What it shows
-
-Click the dot in the menu bar. The dot is green, yellow, or red, with a count of open issues.
-
-- Load, memory and memory pressure, swap, disk, uptime, power source, and thermal state. Anything past a threshold changes color.
-- Every app rolled up with all of its helpers. Cursor is Cursor plus its renderers and extension hosts. CPU is shown as a share of the whole machine, so 25% means a quarter of all your cores, not a quarter of one.
-- Issues, each with the one action that fixes it.
-- A few sentences of advice, and a note when the same problem keeps coming back.
-
-## What it detects
-
-- A process stuck at high CPU for minutes. It will not recover on its own, so the fix is to stop it.
-- A process that is working hard on purpose, like a compiler or a video encoder. Same numbers, gentler wording, no alarm.
-- An app that has taken over: a large share of CPU for a sustained period, or a large share of RAM, across all of its processes. The fix asks the app to quit normally so it can save its state.
-- Helper processes whose parent session has exited but that are still running. Claude Code's pre-warmed helpers are the built-in example; the rule is a small table and easy to extend.
-- Memory pressure, from the same kernel signal Activity Monitor uses.
-- Swap filling up. Only a restart empties it, and Vitals says so.
-- Low disk. macOS gets slow under about 15% free.
-- Long uptime. Leaked processes and swap accumulate until you reboot.
-- Thermal state, with the name of the app most responsible.
-
-When a new issue appears you get a notification that names the culprit and offers Clear. Notifications for the same issue are rate limited to one per half hour.
-
-## How it works
-
-Vitals is native Swift. It idles at 0% CPU and about 70 MB of memory. There is no web view, no Electron, and no dependency outside the macOS SDK.
-
-Sampling runs on a private serial queue every 5 seconds, every 2 seconds while the panel is open, and every 15 seconds on battery. A sample reads load averages, `host_statistics64` for memory, `kern.memorystatus_vm_pressure_level` for memory pressure, `vm.swapusage`, the root volume's available capacity, `kern.boottime` for uptime, `ProcessInfo` for thermal state and Low Power Mode, and IOKit for the battery. Processes come from libproc: `proc_listallpids` for the list, `proc_pidinfo` for start time, parent, owner, CPU time and resident size, and `proc_pidpath` for the path. Command lines are read once per process with `sysctl(KERN_PROCARGS2)`, kept in memory for rule matching, and never written anywhere.
-
-Per-process CPU is the difference in CPU time between two samples divided by wall time, so it is an instantaneous reading rather than the lifetime average `ps` prints. Two things about that were wrong in early builds and are worth knowing if you write this kind of code: `proc_listallpids` returns a count of pids, not a byte count, and `proc_taskinfo` reports CPU time in Mach ticks, which on Apple silicon are 125/3 nanoseconds each, not nanoseconds. Both mistakes fail quietly. There are integration tests for both now.
-
-Rules turn a sample into issues. They are pure functions of the sample plus a little state for "how long has this been true", and they reset that state after the machine wakes from sleep so time asleep does not count as time stuck. History keeps thirty days of incidents and five-minute snapshots in one JSON file under `~/Library/Application Support/Vitals`. An incident is identified by what it is, not by which pids it involves, so a leak that grows from six processes to nine is one incident, not two.
-
-Remedies are the only code that changes anything. Stopping a process sends SIGTERM, waits two seconds, then SIGKILL. Quitting an app asks it to terminate normally and only falls back to a kill if it ignores the request for eight seconds. Both only ever touch processes owned by the current user. Freeing disk deletes a fixed list of caches that rebuild themselves and runs `pnpm store prune` and `brew cleanup` if those tools are installed. Restart sends the standard Apple event to loginwindow, so you get the usual confirmation dialog. Everything destructive is logged under the `com.dhruv.vitals` subsystem.
-
-The app installs itself as a user LaunchAgent with KeepAlive on crash. Quit exits cleanly and stays quit until the next login.
-
-## Install
-
-Requires macOS 14 or later. Apple silicon and Intel are both supported.
+<h3 align="center">One line. No Xcode. Runs in the menu bar, stays out of the way.</h3>
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/dhruvsekhawat/vitals/main/install.sh | sh
 ```
 
-That downloads the latest release, checks its SHA-256 against the published checksum, puts `Vitals.app` in `~/Applications`, and launches it. Vitals registers itself to start at login the first time it runs. macOS will ask once whether it may send notifications. Say yes, or the alerts are silent.
+<p align="center"><sub>Or grab <a href="https://github.com/dhruvsekhawat/vitals/releases/latest">the latest release</a>, unzip, double-click. It is signed and notarized, so macOS just opens it.</sub></p>
 
-If you would rather not pipe a script into your shell: download `Vitals-<version>.zip` from the [releases page](https://github.com/dhruvsekhawat/vitals/releases/latest), unzip it, move `Vitals.app` to `~/Applications`, then right-click it and choose Open the first time. The right-click is needed because release builds are signed ad hoc, not notarized. The install script removes that quarantine flag for you because you explicitly chose to install; a notarized build would need an Apple Developer ID and would make this a plain double-click.
+<br>
 
-To remove it:
+<table align="center">
+  <tr>
+    <td align="center"><img src="docs/panel.png" width="360" alt="Vitals panel, all clear"><br><sub><b>A calm afternoon.</b> Green dot, nothing to do.</sub></td>
+    <td align="center"><img src="docs/panel-hot.png" width="360" alt="Vitals panel with an app taking over the CPU"><br><sub><b>Something is on fire.</b> Four cores pinned on purpose with <code>yes</code>. Named, measured, one button away from fixed.</sub></td>
+  </tr>
+</table>
 
-```sh
-curl -fsSL https://raw.githubusercontent.com/dhruvsekhawat/vitals/main/install.sh | sh -s -- --uninstall
-```
+<br>
 
-### Build from source
+## The story
 
-Needs Xcode 15 or later.
+My laptop was hot, the fans were loud, and it had felt slow for weeks. Activity Monitor showed 400 processes and no answer.
 
-```sh
-git clone https://github.com/dhruvsekhawat/vitals.git
-cd vitals
-./build.sh
-```
+The real causes: two Cursor renderer processes pinned at 100% CPU **for nineteen days**, forty Claude Code helper processes leaked by sessions that had long since closed, swap packed solid, and no restart in forty-one days.
 
-That builds a release binary, assembles `Vitals.app`, signs it, installs it to `~/Applications`, registers the LaunchAgent, and launches it. `./build.sh --test` runs the test suite first; `./build.sh --no-install` stops after signing; `UNIVERSAL=1 ./build.sh` builds for both architectures, which is what the release workflow does.
+None of that is hard to find if you know which four commands to run. Vitals runs them for you, every few seconds, and only speaks up when something is actually wrong. Then it fixes it.
+
+## What you get
+
+<table>
+  <tr>
+    <td width="33%" valign="top">
+      <h4>A dot that means something</h4>
+      Green, yellow, or red in the menu bar, with a count. Click it and the whole picture is one panel: load, memory pressure, swap, disk, uptime, power, thermal state.
+    </td>
+    <td width="33%" valign="top">
+      <h4>Apps, not processes</h4>
+      Cursor is Cursor plus its 40 helpers, summed. Chrome is Chrome plus every tab. CPU is shown as a share of the whole machine, so 25% means a quarter of all your cores.
+    </td>
+    <td width="33%" valign="top">
+      <h4>Plain language</h4>
+      "Cursor Helper (Renderer) is stuck. 98% CPU for 19 days. It will not recover on its own. Kill it." Not a graph you have to interpret.
+    </td>
+  </tr>
+  <tr>
+    <td valign="top">
+      <h4>One click</h4>
+      Kill a stuck process. Quit an app politely so it saves its state. Clear every leaked helper at once. Free disk. Restart. Each is one button, and each says what it will do.
+    </td>
+    <td valign="top">
+      <h4>It comes to you</h4>
+      A notification names the culprit the moment a problem crosses the line, with a Clear action right on the banner. Rate limited, and escalations get through.
+    </td>
+    <td valign="top">
+      <h4>It remembers</h4>
+      Thirty days of history. When the same renderer hangs for the fourth time this month, Vitals says so, and says why that usually happens.
+    </td>
+  </tr>
+</table>
+
+## What it catches
+
+| | Verdict | What Vitals does about it |
+| --- | --- | --- |
+| A process pinned at high CPU for minutes | **is stuck** | offers Kill. SIGTERM first, SIGKILL only if ignored |
+| A compiler or encoder pinned at high CPU | **is working hard** | tells you it is normal. No kill button |
+| An app holding a big share of CPU for two minutes, or a big share of RAM | **is taking over** | offers Quit, the polite kind. Never force-kills on its own |
+| Helper processes whose parent session is gone | **leaked** | offers Clear for all of them at once |
+| Memory pressure, from the same kernel signal Activity Monitor uses | **high / critical** | names the biggest app |
+| Swap growing relative to RAM | **growing / heavy** | tells you only a restart empties it |
+| Disk under 15% free | **low** | offers Free disk, which purges caches that rebuild themselves |
+| Weeks without a restart | **worth a reboot** | offers Restart with the normal macOS confirmation |
+| Thermal pressure | **getting warm / hot** | names the app most responsible |
+
+## Why it is fast
+
+Vitals is native Swift and nothing else. No web view, no Electron, no dependency outside the macOS SDK. It idles at **0% CPU** and about **70 MB** of memory, and a full sample of 400 processes takes a few milliseconds on a background queue. The panel never waits on the sampler.
+
+It samples every 5 seconds, every 2 while the panel is open, every 15 on battery.
+
+## How it works
+
+Sampling reads load averages, `host_statistics64` for memory, the kernel's memory-pressure level, `vm.swapusage`, the root volume's real free space, `kern.boottime` for uptime, `ProcessInfo` for thermal state, and IOKit for the battery. Processes come from libproc: the pid list, start time, parent, owner, CPU time, and physical footprint. Command lines are read only for processes reparented to launchd, held in memory for rule matching, and never written anywhere.
+
+Per-process CPU is the difference in CPU time between two samples over wall time, so it is a live number, not the lifetime average `ps` prints.
+
+Two things about that were wrong in early builds, and both fail silently. `proc_listallpids` returns a count of pids, not a byte count. And `proc_taskinfo` reports CPU time in Mach ticks, which on Apple silicon are 125/3 nanoseconds each, not nanoseconds. There are integration tests for both now, which spin a real process at 100% and check that Vitals sees it.
+
+Rules are pure functions of a sample, plus a little state for "how long has this been true" that resets when the machine wakes from sleep. A verdict needs three consecutive quiet samples to clear, so nothing flaps while the panel is open. History keeps incidents keyed by what they are, not by which pids they involve, so a leak that grows from six processes to nine is one incident, and a renderer that hangs under a new pid every day is counted as the pattern it is.
+
+Remedies are the only code that changes anything. They only ever touch processes owned by you. Quitting an app asks it to terminate normally and stops there; if it declines, the panel says so and offers an explicit Kill. Freeing disk empties a fixed list of self-rebuilding caches and runs `pnpm store prune` and `brew cleanup` if you have them. Everything destructive is logged under `com.dhruv.vitals`.
+
+The app installs a user LaunchAgent with KeepAlive on crash. Quit exits cleanly and stays quit until your next login.
 
 ## Check it from a shell
 
@@ -81,9 +112,7 @@ That builds a release binary, assembles `Vitals.app`, signs it, installs it to `
 ~/Applications/Vitals.app/Contents/MacOS/Vitals --snapshot panel.png
 ```
 
-Renders the panel to a PNG and prints the per-app rollup to stderr, then exits. This is how the UI is verified in this project. It works over SSH and needs no screen recording permission.
-
-Logs:
+Renders the panel to a PNG and prints the per-app rollup to stderr, then exits. This is how the screenshots above were made, and how the UI is verified in CI. Works over SSH, needs no screen-recording permission.
 
 ```sh
 log stream --predicate 'subsystem == "com.dhruv.vitals"' --level info
@@ -118,23 +147,29 @@ defaults write com.dhruv.vitals threshold.hotCPU 90
 
 Swap is measured against RAM on purpose. macOS grows its swap files on demand, so "percent of swap used" sits near 100% whenever any swap exists and tells you nothing. Four gigabytes swapped on a 16 GB machine is worth a warning; eight is a machine that is paging constantly.
 
-## Signing a build for other people
+## Build from source
 
-With no environment variables, `build.sh` signs ad hoc, which is fine on your own machine. For a build you can hand to someone else:
+Needs macOS 14 and Xcode 15 or later.
 
 ```sh
-CODESIGN_IDENTITY="Developer ID Application: Your Name (TEAMID)" ./build.sh --no-install
+git clone https://github.com/dhruvsekhawat/vitals.git
+cd vitals
+./build.sh
 ```
 
-That signs with the hardened runtime and a trusted timestamp. Set `NOTARY_PROFILE` to a keychain profile created with `xcrun notarytool store-credentials` to notarize and staple in the same run. The app is not sandboxed. It enumerates and signals other processes, deletes caches, and writes a LaunchAgent, none of which the sandbox allows. `Vitals.entitlements` has the details.
+That builds a release binary, assembles `Vitals.app`, signs it, installs it to `~/Applications`, registers the LaunchAgent, and launches it. `./build.sh --test` runs the 111 tests first. `UNIVERSAL=1 ./build.sh` builds for both architectures. `CODESIGN_IDENTITY` and `NOTARY_PROFILE` make it a notarized build; see [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## Privacy
 
-Everything stays on the machine. Command lines are read into memory for rule matching and are never persisted or logged. The only file Vitals writes outside its own bundle is `~/Library/Application Support/Vitals/state.json`, which holds incidents and snapshots, and the LaunchAgent plist. Nothing is sent anywhere.
+Everything stays on the machine. Command lines are read into memory for rule matching and are never persisted or logged. The only files Vitals writes outside its own bundle are `~/Library/Application Support/Vitals/state.json`, which holds incidents and snapshots, and its LaunchAgent plist. Nothing is sent anywhere. There is no analytics, no update check, no network access at all.
 
 ## Uninstall
 
-The install script with `--uninstall` (see above), or by hand:
+```sh
+curl -fsSL https://raw.githubusercontent.com/dhruvsekhawat/vitals/main/install.sh | sh -s -- --uninstall
+```
+
+Or by hand:
 
 ```sh
 launchctl bootout gui/$(id -u)/com.dhruv.vitals
@@ -145,7 +180,7 @@ rm -rf ~/Library/Application\ Support/Vitals
 
 ## Contributing
 
-See [CONTRIBUTING.md](CONTRIBUTING.md). The short version: keep it native, keep it small, and every rule gets a test.
+See [CONTRIBUTING.md](CONTRIBUTING.md). The short version: keep it native, keep it small, and every rule gets a test. Bugs go in [issues](https://github.com/dhruvsekhawat/vitals/issues); anything that could make Vitals kill or delete the wrong thing goes through [private reporting](https://github.com/dhruvsekhawat/vitals/security/advisories/new).
 
 ## License
 
