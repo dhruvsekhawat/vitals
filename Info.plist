@@ -33,7 +33,13 @@
 	<key>LSUIElement</key>
 	<true/>
 	<key>NSAppleEventsUsageDescription</key>
-	<string>Vitals asks macOS to show the standard restart dialog when you click Restart.</string>
+	<string>Vitals asks Finder for the size of the Trash and to empty it when you click Empty Trash, and asks macOS to show the restart dialog when you click Restart.</string>
+	<key>NSDesktopFolderUsageDescription</key>
+	<string>Vitals looks for large files and old build folders on your Desktop so it can offer to clear them.</string>
+	<key>NSDocumentsFolderUsageDescription</key>
+	<string>Vitals looks for large files and old build folders in Documents so it can offer to clear them.</string>
+	<key>NSDownloadsFolderUsageDescription</key>
+	<string>Vitals looks for old installers, archives and large files in Downloads so it can offer to clear them.</string>
 	<key>NSHighResolutionCapable</key>
 	<true/>
 	<key>NSHumanReadableCopyright</key>

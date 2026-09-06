@@ -21,20 +21,30 @@ final class StorageModel: ObservableObject {
 
     func scan() {
         guard !scanning else { return }
+        scanner?.cancel()
         scanning = true; status = "Starting"; lastOutcome = nil
         let s = StorageScanner()
         scanner = s
+        let previous = report
+        let previousSelection = selected
         queue.async { [weak self] in
             let r = s.scan { line in Task { @MainActor in self?.status = line } }
             Task { @MainActor in
-                guard let self else { return }
+                guard let self, self.scanner === s else { return }   // a newer scan superseded this one
                 self.report = r
-                self.selected = Set(r.items.filter { $0.grade == .safe }.map(\.id))
+                // Keep the user's choices: what they ticked stays ticked, what they unticked stays unticked,
+                // and only rows that are new since last time get the safe-by-default treatment.
+                let ids = Set(r.items.map(\.id))
+                let known = Set(previous?.items.map(\.id) ?? [])
+                let fresh = r.items.filter { $0.grade == .safe && !known.contains($0.id) }.map(\.id)
+                self.selected = previousSelection.intersection(ids).union(fresh)
                 self.scanning = false
                 self.status = ""
             }
         }
     }
+
+    func cancel() { scanner?.cancel() }
 
     func setAll(_ grade: StorageGrade, on: Bool) {
         guard let r = report else { return }
@@ -48,28 +58,39 @@ final class StorageModel: ObservableObject {
         scanning = true; status = "Moving to Trash"
         queue.async { [weak self] in
             let o = StorageActions.trash(items)
+            let trash = StorageActions.trashBytes()
+            let disk = StorageScanner.disk()
             Task { @MainActor in
                 guard let self else { return }
                 self.scanning = false; self.status = ""
-                var msg = "Moved \(Format.bytes(o.bytes)) to the Trash. Empty it to get the space back."
-                if !o.failed.isEmpty { msg += " Could not move: " + o.failed.map { ($0.path as NSString).lastPathComponent }.joined(separator: ", ") + "." }
+                var msg = "Moved \(Format.bytes(o.bytes)) to the Trash, as Finder counts it. Empty the Trash to get the space back."
+                if !o.failed.isEmpty { msg = "Could not move " + o.failed.map { "\(($0.path as NSString).lastPathComponent) (\($0.reason))" }.joined(separator: ", ") + ". " + msg }
                 self.lastOutcome = msg
-                self.scan()
+                // Drop the rows that went; no need to rescan the whole disk for that.
+                let gone = Set(o.trashed)
+                if var r = self.report {
+                    r.items.removeAll { gone.contains($0.path) }
+                    r.trashBytes = trash; r.diskFree = disk.free; r.diskTotal = disk.total
+                    self.report = r
+                }
+                self.selected.subtract(gone)
             }
         }
     }
 
     func emptyTrash() {
         guard !scanning else { return }
-        scanning = true; status = "Emptying Trash"
+        scanning = true; status = "Finder is emptying the Trash"
         let had = report?.trashBytes ?? 0
         queue.async { [weak self] in
             let err = StorageActions.emptyTrash()
+            let trash = StorageActions.trashBytes()
+            let disk = StorageScanner.disk()
             Task { @MainActor in
                 guard let self else { return }
                 self.scanning = false; self.status = ""
                 self.lastOutcome = err.map { "Could not empty the Trash: \($0). Use Finder." } ?? "Emptied the Trash. \(Format.bytes(had)) back."
-                self.scan()
+                if var r = self.report { r.trashBytes = trash; r.diskFree = disk.free; r.diskTotal = disk.total; self.report = r }
             }
         }
     }
@@ -107,11 +128,12 @@ struct StorageView: View {
         .frame(minWidth: 560, idealWidth: 600, minHeight: 520, idealHeight: 720)
         .font(.system(size: 13))
         .onAppear { if model.report == nil { model.scan() } }
+        .onDisappear { model.cancel() }
         .alert("Empty the Trash?", isPresented: $model.confirmEmpty) {
             Button("Empty Trash", role: .destructive) { model.emptyTrash() }
             Button("Cancel", role: .cancel) {}
         } message: {
-            Text("This deletes everything in the Trash for good, including anything you put there yourself. \(Format.bytes(model.report?.trashBytes ?? 0)) comes back.")
+            Text("This deletes everything in the Trash for good, including anything you put there yourself, and the Trash of any connected drive. \(Format.bytes(model.report?.trashBytes ?? 0)) comes back.")
         }
     }
 
@@ -176,7 +198,8 @@ struct StorageView: View {
                 }
             }
             .padding(.bottom, 2)
-            let shown = model.expanded.contains(g) ? items : Array(items.prefix(10))
+            // Never hide a selected row: what the button will act on must be on screen.
+            let shown = model.expanded.contains(g) ? items : items.enumerated().filter { $0.offset < 10 || model.selected.contains($0.element.id) }.map(\.element)
             ForEach(shown) { i in row(i) }
             if items.count > shown.count {
                 Button("\(items.count - shown.count) more") { model.expanded.insert(g) }
@@ -224,15 +247,21 @@ struct StorageView: View {
         HStack(spacing: 12) {
             let n = model.selectedItems.count
             Button(n == 0 ? "Move to Trash" : "Move \(Format.bytes(model.selectedBytes)) to Trash") { model.trashSelected() }
-                .keyboardShortcut(.defaultAction)
                 .disabled(n == 0 || model.scanning)
                 .help("Moves the selected items to the Trash. Nothing is deleted until you empty it.")
             Text(n == 0 ? "Nothing selected" : "\(n) item\(n == 1 ? "" : "s")").foregroundStyle(.secondary)
             Spacer()
-            if let t = model.report?.trashBytes, t > 0 {
-                Text("Trash holds \(Format.bytes(t))").foregroundStyle(.secondary)
-                Button("Empty Trash") { model.confirmEmpty = true }.disabled(model.scanning)
-                    .help("Deletes everything in the Trash. This cannot be undone.")
+            if let r = model.report {
+                if let t = r.trashBytes {
+                    if t > 0 { Text("Trash holds \(Format.bytes(t))").foregroundStyle(.secondary) }
+                } else {
+                    Text("Trash size unknown. Allow Vitals to control Finder in System Settings, Privacy and Security, Automation.")
+                        .foregroundStyle(.secondary).font(.system(size: 11)).lineLimit(2).frame(maxWidth: 260)
+                }
+                if (r.trashBytes ?? 1) > 0 {
+                    Button("Empty Trash") { model.confirmEmpty = true }.disabled(model.scanning)
+                        .help("Asks Finder to delete everything in the Trash. This cannot be undone.")
+                }
             }
         }
         .controlSize(.regular)
