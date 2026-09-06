@@ -95,6 +95,7 @@ final class Engine: ObservableObject {
     @Published private(set) var lastResult: String?
     @Published private(set) var launchAtLogin = false
     @Published private(set) var notificationsAllowed = true
+    let storage = StorageModel()
     /// True while the popover is showing. Sampling speeds up so numbers feel live.
     var panelVisible = false { didSet { if panelVisible != oldValue { reschedule() } } }
 

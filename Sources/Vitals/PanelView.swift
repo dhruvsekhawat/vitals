@@ -13,6 +13,7 @@ extension Severity {
 
 struct PanelView: View {
     @ObservedObject var engine: Engine
+    @Environment(\.openWindow) private var openWindow
     private var st: ViewState { engine.state }
 
     var body: some View {
@@ -175,9 +176,8 @@ struct PanelView: View {
                 Button(n == 0 ? "Clear" : "Clear \(n)") { engine.clear() }
                     .disabled(n == 0 || engine.busy != nil)
                     .help("Apply every fix listed above")
-                Button("Free disk") { engine.freeDisk() }
-                    .disabled(engine.busy != nil)
-                    .help("Delete caches that rebuild themselves: Xcode, Homebrew, npm, uv, browser caches")
+                Button("Storage…") { openStorage() }
+                    .help("See what is filling the disk, graded by how safe it is to remove")
                 Button("Restart…") { engine.restart() }
                     .help("Ask macOS to restart. You get the usual confirmation.")
                 Spacer()
@@ -201,6 +201,11 @@ struct PanelView: View {
                     .help("Also relaunches Vitals if it ever crashes")
             }
         }
+    }
+
+    private func openStorage() {
+        openWindow(id: "storage")
+        NSApp.activate(ignoringOtherApps: true)
     }
 
     private func thermalText(_ t: Thermal) -> String {

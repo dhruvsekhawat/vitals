@@ -86,6 +86,18 @@ None of that is hard to find if you know which four commands to run. Vitals runs
 | Weeks without a restart | **worth a reboot** | offers Restart with the normal macOS confirmation |
 | Thermal pressure | **getting warm / hot** | names the app most responsible |
 
+## Storage
+
+Disks fill up with things nobody chose to keep. Click **Storage** in the panel and Vitals finds them and grades them.
+
+<p align="center"><img src="docs/storage.png" width="560" alt="The Storage window: caches pre-selected as safe, build directories listed as rebuildable, personal files left for review"></p>
+
+- **Safe to clear.** Comes back on its own: Xcode build products and device symbols, Homebrew, npm, pnpm, uv, pip, Cargo and Gradle caches, browser and app caches, the Adobe media cache, logs, installers for apps you already have. Selected by default.
+- **Rebuildable.** Comes back with a reinstall or rebuild: `node_modules`, virtualenvs, Rust and Next.js output, CocoaPods, iOS simulators, Docker's disk image. Each project row says how long the project has been untouched.
+- **Your files, review first.** Large files in Downloads, Desktop, Documents, Movies, old archives, iPhone backups. Listed with sizes so you can decide. Never selected for you.
+
+One button moves the selection to the Trash. Nothing is deleted outright; the Trash is the undo. A second, separate button empties it, through Finder, after a confirmation.
+
 ## Why it is fast
 
 Vitals is native Swift and nothing else. No web view, no Electron, no dependency outside the macOS SDK. It idles at **0% CPU** and about **70 MB** of memory, and a full sample of 400 processes takes a few milliseconds on a background queue. The panel never waits on the sampler.
