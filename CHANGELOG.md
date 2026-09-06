@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.1.0 (2026-09-06)
+
+- Storage window. Click Storage in the panel to see what is filling the disk, graded by how safe it is to remove: safe (caches and build products, selected by default), rebuildable (node_modules, virtualenvs, simulators, installers, Docker's disk; never pre-selected), and your own large files for review. One button moves the selection to the Trash; a separate confirmed button empties it through Finder.
+- Sizes are allocated bytes with hard links counted once, from a single fts pass per location. Fixed cache locations are sized in parallel.
+- Selection survives rescans. Selected rows are never hidden. Return does not trigger the Trash button.
+
 ## 1.0.1 (2026-09-06)
 
 - Releases are signed with Developer ID and notarized. Downloaded builds open with a double-click; no right-click, no quarantine workaround.
