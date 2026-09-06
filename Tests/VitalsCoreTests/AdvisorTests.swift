@@ -1,0 +1,189 @@
+import XCTest
+@testable import VitalsCore
+
+final class AdvisorTests: XCTestCase {
+
+    private let emDash = "\u{2014}"
+
+    private func recommend(_ s: Sample, issues: [Issue] = [], recurrences: [Recurrence] = [], lastIncident: Incident? = nil) -> [Recommendation] {
+        let out = Advisor.recommend(sample: s, issues: issues, recurrences: recurrences, lastIncident: lastIncident, now: T0)
+        for r in out { XCTAssertFalse(r.text.contains(emDash), "em dash in: \(r.text)") }
+        XCTAssertFalse(out.isEmpty, "advisor always says something")
+        return out
+    }
+
+    private let runaway = makeIssue(kind: .runaway, severity: .bad, title: "Foo is stuck", detail: "98% CPU for 19d",
+                                    remedy: .kill([42]), key: "runaway:Foo#42")
+    private let appHog = makeIssue(kind: .appHog, severity: .warn, title: "Arc is taking over",
+                                   detail: "40% of CPU for 5m across 6 processes",
+                                   remedy: .quitApp(name: "Arc", pids: [1, 2, 3, 4, 5, 6]), key: "appHog:Arc")
+    private let orphan = makeIssue(kind: .orphan, severity: .warn, title: "Leaked Claude Code processes", detail: "3 left behind",
+                                   remedy: .kill([10, 11, 12]), key: "orphan:Claude Code")
+
+    // MARK: Nothing to fix
+
+    func testBenignMachineHasNothingToFix() throws {
+        let out = recommend(makeSample())
+        XCTAssertEqual(out, [Recommendation("Nothing to fix.")])
+        XCTAssertEqual(out[0].action, .none)
+    }
+
+    func testNothingToFixMentionsLastIncident() throws {
+        let last = Incident(key: "runaway:Foo#42", kind: .runaway, severity: .bad, title: "Foo is stuck", detail: "98% CPU",
+                            openedAt: T0.addingTimeInterval(-3 * 86400), closedAt: T0.addingTimeInterval(-2 * 86400), clearedByUser: true)
+        let out = recommend(makeSample(), lastIncident: last)
+        XCTAssertEqual(out.count, 1)
+        XCTAssertEqual(out[0].text, "Nothing to fix. Last problem: Foo is stuck, 3d ago.")
+    }
+
+    // MARK: Issue-driven
+
+    func testRunawayIssueGetsClearAction() throws {
+        let out = recommend(makeSample(), issues: [runaway])
+        XCTAssertEqual(out.count, 1)
+        XCTAssertEqual(out[0].action, .clear)
+        XCTAssertTrue(out[0].text.hasPrefix("Foo is pinned at 98% CPU for 19d"), out[0].text)
+        XCTAssertTrue(out[0].text.contains("Kill it"), out[0].text)
+    }
+
+    func testAppHogIssueGetsClearAction() throws {
+        let out = recommend(makeSample(), issues: [appHog])
+        XCTAssertEqual(out.count, 1)
+        XCTAssertEqual(out[0].action, .clear)
+        XCTAssertTrue(out[0].text.hasPrefix("Arc is using 40% of CPU"), out[0].text)
+    }
+
+    func testOrphanIssueGetsClearActionWithPidCount() throws {
+        let out = recommend(makeSample(), issues: [orphan])
+        XCTAssertEqual(out.count, 1)
+        XCTAssertEqual(out[0].action, .clear)
+        XCTAssertTrue(out[0].text.hasPrefix("3 helpers were left running"), out[0].text)
+    }
+
+    // MARK: Restart
+
+    func testFullSwapRecommendsRestartBecauseOfPaging() throws {
+        let out = recommend(makeSample(swapTotal: 100, swapUsed: 92))
+        XCTAssertEqual(out.count, 1)
+        XCTAssertEqual(out[0].action, .restart)
+        XCTAssertTrue(out[0].text.contains("paging"), out[0].text)
+    }
+
+    func testHighSwapRecommendsRestartWithPercent() throws {
+        let out = recommend(makeSample(swapTotal: 100, swapUsed: 80))
+        XCTAssertEqual(out.count, 1)
+        XCTAssertEqual(out[0].action, .restart)
+        XCTAssertTrue(out[0].text.contains("80%"), out[0].text)
+        XCTAssertFalse(out[0].text.contains("paging"), out[0].text)
+    }
+
+    func testLongUptimeWithLowSwapRecommendsRestart() throws {
+        let out = recommend(makeSample(swapTotal: 100, swapUsed: 5, uptime: 20 * 86400))
+        XCTAssertEqual(out.count, 1)
+        XCTAssertEqual(out[0].action, .restart)
+        XCTAssertTrue(out[0].text.hasPrefix("20 days since a restart"), out[0].text)
+    }
+
+    func testCriticalMemoryPressureRecommendsRestart() throws {
+        let out = recommend(makeSample(memoryPressure: .critical))
+        XCTAssertEqual(out.map(\.action), [.restart])
+    }
+
+    // MARK: Disk
+
+    func testLowDiskRecommendsFreeingSpace() throws {
+        let out = recommend(makeSample(diskTotal: 100, diskFree: 10))
+        XCTAssertEqual(out.count, 1)
+        XCTAssertEqual(out[0].action, .freeDisk)
+        XCTAssertTrue(out[0].text.hasPrefix("Disk is 90% full"), out[0].text)
+    }
+
+    // MARK: Load
+
+    func testHighLoadRightAfterBootIsExplainedAway() throws {
+        let out = recommend(makeSample(cores: 8, load5: 24, uptime: 100))
+        XCTAssertEqual(out.count, 1)
+        XCTAssertTrue(out[0].text.hasPrefix("Just restarted"), out[0].text)
+        XCTAssertFalse(out[0].text.contains("no single culprit"))
+        XCTAssertEqual(out[0].action, .none)
+    }
+
+    func testHighLoadWithNoCulpritIsCalledOut() throws {
+        let out = recommend(makeSample(cores: 8, load5: 24, uptime: 86400))
+        XCTAssertEqual(out.count, 1)
+        XCTAssertEqual(out[0].text, "5-minute load is 24 on 8 cores with no single culprit. Too many apps open at once.")
+    }
+
+    func testHighLoadWithARunawayDoesNotBlameEveryone() throws {
+        let out = recommend(makeSample(cores: 8, load5: 24, uptime: 86400), issues: [runaway])
+        XCTAssertEqual(out.count, 1)
+        XCTAssertEqual(out[0].action, .clear)
+        XCTAssertFalse(out[0].text.contains("no single culprit"))
+    }
+
+    func testModerateLoadIsSilent() throws {
+        // 1.5 x 8 cores = 12 is the line; 12 is not over it.
+        XCTAssertEqual(recommend(makeSample(cores: 8, load5: 12, uptime: 86400)).map(\.text), ["Nothing to fix."])
+    }
+
+    // MARK: Battery
+
+    func testBusyOnBatteryAsksToPlugIn() throws {
+        let battery = Battery(percent: 37, charging: false, onBattery: true)
+        let out = recommend(makeSample(lowPowerMode: false, battery: battery), issues: [appHog])
+        let plug = try XCTUnwrap(out.first { $0.text.contains("Plug in") })
+        XCTAssertTrue(plug.text.contains("37%"), plug.text)
+        XCTAssertEqual(plug.action, .none)
+    }
+
+    func testBusyOnBatteryInLowPowerModeSaysNothingAboutPluggingIn() throws {
+        let battery = Battery(percent: 37, charging: false, onBattery: true)
+        let out = recommend(makeSample(lowPowerMode: true, battery: battery), issues: [appHog])
+        XCTAssertNil(out.first { $0.text.contains("Plug in") })
+    }
+
+    func testPluggedInWithBusyCPUSaysNothingAboutBattery() throws {
+        let battery = Battery(percent: 90, charging: true, onBattery: false)
+        let out = recommend(makeSample(battery: battery), issues: [appHog])
+        XCTAssertNil(out.first { $0.text.contains("Plug in") })
+    }
+
+    // MARK: Recurrences
+
+    func testRendererRecurrenceGetsExtensionHint() throws {
+        let r = Recurrence(key: "runaway:Cursor Helper (Renderer)#1", title: "Cursor \u{00B7} Cursor Helper (Renderer) is stuck",
+                           kind: .runaway, count: 4, last: T0)
+        let out = recommend(makeSample(), recurrences: [r])
+        XCTAssertEqual(out.count, 1)
+        let text = out[0].text
+        XCTAssertTrue(text.contains("come back 4 times"), text)
+        XCTAssertTrue(text.contains("extension"), text)
+        XCTAssertEqual(out[0].action, .none)
+    }
+
+    func testOrphanRecurrenceGetsParentAppHint() throws {
+        let r = Recurrence(key: "orphan:Claude Code", title: "Leaked Claude Code processes", kind: .orphan, count: 2, last: T0)
+        let out = recommend(makeSample(), recurrences: [r])
+        XCTAssertEqual(out.count, 1)
+        XCTAssertTrue(out[0].text.contains("come back 2 times"), out[0].text)
+        XCTAssertTrue(out[0].text.contains("parent app"), out[0].text)
+    }
+
+    // MARK: Everything at once
+
+    func testCombinedCaseHasNoEmDashesAndNoNothingToFix() throws {
+        let battery = Battery(percent: 12, charging: false, onBattery: true)
+        let r = Recurrence(key: "appHog:Arc", title: "Arc is taking over", kind: .appHog, count: 3, last: T0)
+        let s = makeSample(cores: 8, load5: 30, memoryPressure: .warning,
+                           swapTotal: 100, swapUsed: 80, diskTotal: 100, diskFree: 5,
+                           uptime: 40 * 86400, thermal: .serious, battery: battery)
+        let out = recommend(s, issues: [runaway, appHog, orphan], recurrences: [r])
+        XCTAssertNil(out.first { $0.text.hasPrefix("Nothing to fix") })
+        XCTAssertEqual(out.filter { $0.action == .clear }.count, 3)
+        XCTAssertEqual(out.filter { $0.action == .restart }.count, 1)
+        XCTAssertEqual(out.filter { $0.action == .freeDisk }.count, 1)
+        XCTAssertNotNil(out.first { $0.text.contains("Plug in") })
+        XCTAssertNotNil(out.first { $0.text.contains("come back 3 times") })
+        XCTAssertNil(out.first { $0.text.contains("no single culprit") }, "runaway and appHog are the culprits")
+    }
+}

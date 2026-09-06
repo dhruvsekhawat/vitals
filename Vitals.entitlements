@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Vitals.entitlements
+
+  Vitals ships with the hardened runtime (codesign, with the option "runtime") and
+  without the App Sandbox. Sandboxing is off on purpose: the app enumerates every
+  process on the machine through libproc, sends signals to stuck processes, deletes
+  cache directories that belong to other apps, and writes a LaunchAgent plist into
+  ~/Library/LaunchAgents. None of that is reachable from inside the sandbox.
+  Do not add com.apple.security.app-sandbox.
+
+  No hardened runtime exceptions are needed either: no JIT, no unsigned executable
+  memory, no dyld environment variables, no third party plug-ins. An empty dict is
+  the correct file.
+-->
+<plist version="1.0">
+<dict/>
+</plist>
