@@ -207,4 +207,3 @@ public enum Shell {
         return Result(status: p.terminationStatus, output: String(decoding: collected, as: UTF8.self))
     }
 }
-}
