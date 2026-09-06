@@ -187,21 +187,24 @@ public enum Shell {
         p.environment = ["PATH": searchPath.joined(separator: ":"), "HOME": NSHomeDirectory()]
         let pipe = Pipe()
         p.standardOutput = pipe; p.standardError = pipe
-        let lock = NSLock()
+        // Drain on a background thread until EOF. A blocked reader would let a chatty child
+        // fill the pipe and hang; a reader that stops early would lose the tail. This does neither.
         var collected = Data()
-        pipe.fileHandleForReading.readabilityHandler = { h in
-            let d = h.availableData
-            lock.lock(); collected.append(d); lock.unlock()
+        let drained = DispatchSemaphore(value: 0)
+        DispatchQueue.global(qos: .utility).async {
+            collected = pipe.fileHandleForReading.readDataToEndOfFile()
+            drained.signal()
         }
-        let done = DispatchSemaphore(value: 0)
-        p.terminationHandler = { _ in done.signal() }
+        let exited = DispatchSemaphore(value: 0)
+        p.terminationHandler = { _ in exited.signal() }
         do { try p.run() } catch { return Result(status: 126, output: error.localizedDescription) }
-        if done.wait(timeout: .now() + timeout) == .timedOut {
+        if exited.wait(timeout: .now() + timeout) == .timedOut {
             p.terminate()
-            if done.wait(timeout: .now() + 2) == .timedOut { Darwin.kill(p.processIdentifier, SIGKILL); _ = done.wait(timeout: .now() + 1) }
+            if exited.wait(timeout: .now() + 2) == .timedOut { Darwin.kill(p.processIdentifier, SIGKILL); _ = exited.wait(timeout: .now() + 1) }
         }
-        pipe.fileHandleForReading.readabilityHandler = nil
-        lock.lock(); collected.append(pipe.fileHandleForReading.availableData); let out = collected; lock.unlock()
-        return Result(status: p.terminationStatus, output: String(decoding: out, as: UTF8.self))
+        // EOF arrives once every writer has closed; grandchildren holding the pipe are rare, so cap the wait.
+        _ = drained.wait(timeout: .now() + 5)
+        return Result(status: p.terminationStatus, output: String(decoding: collected, as: UTF8.self))
     }
+}
 }
