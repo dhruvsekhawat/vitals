@@ -1,0 +1,5 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Security issue
+    url: https://github.com/dhruvsekhawat/vitals/security/advisories/new
+    about: Vitals kills processes and deletes caches. If you found a way to make it do that to the wrong thing, report it privately here.
