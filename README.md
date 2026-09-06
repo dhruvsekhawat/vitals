@@ -47,7 +47,25 @@ The app installs itself as a user LaunchAgent with KeepAlive on crash. Quit exit
 
 ## Install
 
-Requires macOS 14 or later and Xcode 15 or later.
+Requires macOS 14 or later. Apple silicon and Intel are both supported.
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/dhruvsekhawat/vitals/main/install.sh | sh
+```
+
+That downloads the latest release, checks its SHA-256 against the published checksum, puts `Vitals.app` in `~/Applications`, and launches it. Vitals registers itself to start at login the first time it runs. macOS will ask once whether it may send notifications. Say yes, or the alerts are silent.
+
+If you would rather not pipe a script into your shell: download `Vitals-<version>.zip` from the [releases page](https://github.com/dhruvsekhawat/vitals/releases/latest), unzip it, move `Vitals.app` to `~/Applications`, then right-click it and choose Open the first time. The right-click is needed because release builds are signed ad hoc, not notarized. The install script removes that quarantine flag for you because you explicitly chose to install; a notarized build would need an Apple Developer ID and would make this a plain double-click.
+
+To remove it:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/dhruvsekhawat/vitals/main/install.sh | sh -s -- --uninstall
+```
+
+### Build from source
+
+Needs Xcode 15 or later.
 
 ```sh
 git clone https://github.com/dhruvsekhawat/vitals.git
@@ -55,9 +73,7 @@ cd vitals
 ./build.sh
 ```
 
-That builds a release binary, assembles `Vitals.app`, signs it, installs it to `~/Applications`, registers the LaunchAgent, and launches it. Run `./build.sh --test` to run the test suite first, or `./build.sh --no-install` to stop after signing.
-
-macOS will ask once whether Vitals may send notifications. Say yes or the alerts are silent.
+That builds a release binary, assembles `Vitals.app`, signs it, installs it to `~/Applications`, registers the LaunchAgent, and launches it. `./build.sh --test` runs the test suite first; `./build.sh --no-install` stops after signing; `UNIVERSAL=1 ./build.sh` builds for both architectures, which is what the release workflow does.
 
 ## Check it from a shell
 
@@ -117,6 +133,8 @@ That signs with the hardened runtime and a trusted timestamp. Set `NOTARY_PROFIL
 Everything stays on the machine. Command lines are read into memory for rule matching and are never persisted or logged. The only file Vitals writes outside its own bundle is `~/Library/Application Support/Vitals/state.json`, which holds incidents and snapshots, and the LaunchAgent plist. Nothing is sent anywhere.
 
 ## Uninstall
+
+The install script with `--uninstall` (see above), or by hand:
 
 ```sh
 launchctl bootout gui/$(id -u)/com.dhruv.vitals

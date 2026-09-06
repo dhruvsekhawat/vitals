@@ -1,0 +1,51 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Select newest Xcode on the runner
+        run: sudo xcode-select -s "$(ls -d /Applications/Xcode*.app | sort -V | tail -1)"
+
+      - name: Test
+        run: swift test
+
+      - name: Build universal app bundle
+        run: UNIVERSAL=1 ./build.sh --no-install
+
+      - name: Check the tag matches Info.plist
+        run: |
+          v=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' build/Vitals.app/Contents/Info.plist)
+          [ "v$v" = "${GITHUB_REF_NAME}" ] || { echo "tag ${GITHUB_REF_NAME} does not match CFBundleShortVersionString $v"; exit 1; }
+          lipo -info build/Vitals.app/Contents/MacOS/Vitals
+
+      - name: Package
+        run: |
+          cd build
+          ditto -c -k --keepParent Vitals.app "Vitals-${GITHUB_REF_NAME}.zip"
+          shasum -a 256 "Vitals-${GITHUB_REF_NAME}.zip" > "Vitals-${GITHUB_REF_NAME}.zip.sha256"
+          cat "Vitals-${GITHUB_REF_NAME}.zip.sha256"
+
+      - name: Release notes from CHANGELOG
+        run: |
+          # Everything under the first "## " heading up to the next one.
+          awk '/^## /{n++} n==1' CHANGELOG.md > build/notes.md
+          cat build/notes.md
+
+      - name: Create GitHub release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: Vitals ${{ github.ref_name }}
+          body_path: build/notes.md
+          files: |
+            build/Vitals-${{ github.ref_name }}.zip
+            build/Vitals-${{ github.ref_name }}.zip.sha256

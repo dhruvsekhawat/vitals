@@ -40,6 +40,17 @@ log stream --predicate 'subsystem == "com.dhruv.vitals"' --level info
 - `Sources/Vitals`: the app. `Engine` runs the sampling loop on a private queue and hands finished state to the main actor. `PanelView` is the whole UI.
 - `Tests/VitalsCoreTests`: unit tests for the core plus a few integration tests that sample the real machine.
 
+## Releasing
+
+Bump `CFBundleShortVersionString` and `CFBundleVersion` in `Info.plist`, add a section to `CHANGELOG.md`, merge, then tag:
+
+```sh
+git tag v1.1.0
+git push origin v1.1.0
+```
+
+The release workflow tests, builds a universal binary, refuses to continue if the tag does not match `Info.plist`, and publishes the zip and its SHA-256 as a GitHub release with the changelog section as notes. `install.sh` always picks up the latest release.
+
 ## Pull requests
 
 One change per pull request. Say what was wrong, how you know, and how the change fixes it. If a number was wrong, include what `ps` or Activity Monitor said next to what Vitals said.
