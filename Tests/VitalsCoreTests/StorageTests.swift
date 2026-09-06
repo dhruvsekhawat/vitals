@@ -130,13 +130,13 @@ final class StorageTests: XCTestCase {
 
     // MARK: Downloads and large files
 
-    func testOldInstallersAreSafeAndFreshOnesAreNot() throws {
+    func testOldInstallersAreOfferedAsRebuildableAndFreshOnesAreNot() throws {
         try write("Downloads/Old.dmg", bytes: 30 * 1_048_576, modified: Date().addingTimeInterval(-10 * 86400))
         try write("Downloads/Fresh.dmg", bytes: 30 * 1_048_576, modified: Date().addingTimeInterval(-1 * 86400))
         let r = StorageScanner(options: options()).scan()
         let old = try XCTUnwrap(r.items.first { $0.label == "Old.dmg" })
-        XCTAssertEqual(old.grade, .safe)
-        XCTAssertTrue(old.explanation.contains("Installer"), old.explanation)
+        XCTAssertEqual(old.grade, .rebuildable, "a .dmg can be an encrypted vault someone keeps on purpose; never pre-selected")
+        XCTAssertTrue(old.explanation.contains("Installer from 10 days ago"), old.explanation)
         XCTAssertNil(r.items.first { $0.label == "Fresh.dmg" }, "a week-old rule: fresh installers are left alone")
     }
 
@@ -171,10 +171,44 @@ final class StorageTests: XCTestCase {
         XCTAssertTrue(StorageGrade.safe < StorageGrade.review)
     }
 
+    func testNodeModulesNeedsAPackageJson() throws {
+        try write("Code/notes/node_modules/x", bytes: 16_384)   // a folder that merely has the name
+        let r = StorageScanner(options: options()).scan()
+        XCTAssertNil(r.items.first { $0.path.hasSuffix("notes/node_modules") })
+    }
+
+    func testHardLinksCountOnce() throws {
+        let a = try write("Library/Caches/Homebrew/a", bytes: 64 * 1_024)
+        try fm.linkItem(atPath: a, toPath: home.appendingPathComponent("Library/Caches/Homebrew/b").path)
+        let r = StorageScanner(options: options()).scan()
+        let brew = try XCTUnwrap(r.items.first { $0.label == "Homebrew downloads" })
+        XCTAssertLessThan(brew.bytes, 2 * 64 * 1_024, "the same blocks are not counted twice")
+        XCTAssertGreaterThanOrEqual(brew.bytes, 64 * 1_024)
+    }
+
+    func testLargePackagesAreListedAsOneRow() throws {
+        try write("Pictures/Trip.photoslibrary/originals/a.jpg", bytes: 40 * 1_024)
+        try write("Pictures/Trip.photoslibrary/originals/b.jpg", bytes: 40 * 1_024)
+        let r = StorageScanner(options: options()).scan()
+        let lib = try XCTUnwrap(r.items.first { $0.label == "Trip.photoslibrary" })
+        XCTAssertEqual(lib.grade, .review)
+        XCTAssertGreaterThanOrEqual(lib.bytes, 80 * 1_024)
+        XCTAssertNil(r.items.first { $0.label == "a.jpg" }, "files inside a package are not listed on their own")
+    }
+
+    func testCachesAreTrashedByContentsNotByFolder() throws {
+        try write("Library/Caches/Homebrew/a", bytes: 16_384)
+        let r = StorageScanner(options: options()).scan()
+        let brew = try XCTUnwrap(r.items.first { $0.label == "Homebrew downloads" })
+        XCTAssertTrue(brew.contentsOnly, "a running app expects its cache folder to exist")
+        let nm = StorageItem(path: "/x/node_modules", label: "", explanation: "", bytes: 0, modified: nil, grade: .rebuildable)
+        XCTAssertFalse(nm.contentsOnly)
+    }
+
     func testTrashSizeIsReported() throws {
         try write(".Trash/junk", bytes: 16_384)
         let r = StorageScanner(options: options()).scan()
-        XCTAssertGreaterThanOrEqual(r.trashBytes, 0, "read through Finder; may be 0 without Automation permission")
+        XCTAssertTrue(r.trashBytes == nil || r.trashBytes! >= 0, "nil without Automation permission, otherwise a size")
     }
 
     func testNoEmDashesInAnyExplanation() throws {
@@ -186,7 +220,7 @@ final class StorageTests: XCTestCase {
             XCTAssertFalse(i.explanation.contains("\u{2014}"), i.explanation)
             XCTAssertFalse(i.label.contains("\u{2014}"), i.label)
         }
-        for g in StorageGrade.allCases { XCTAssertFalse((g.title + g.subtitle).contains("\u{2014}")) }
+        for g in StorageGrade.allCases { XCTAssertFalse(g.title.contains("\u{2014}")) }
     }
 
     // MARK: Actions
@@ -196,6 +230,14 @@ final class StorageTests: XCTestCase {
         let o = StorageActions.trash([outside])
         XCTAssertTrue(o.trashed.isEmpty)
         XCTAssertEqual(o.failed.first?.reason, "outside your home folder")
+        let homeItself = StorageItem(path: NSHomeDirectory() + "/", label: "home", explanation: "", bytes: 1, modified: nil, grade: .safe)
+        XCTAssertEqual(StorageActions.trash([homeItself]).failed.first?.reason, "that is your home folder")
+        let dotdot = StorageItem(path: NSHomeDirectory() + "/Downloads/../../..", label: "up", explanation: "", bytes: 1, modified: nil, grade: .safe)
+        XCTAssertNotNil(StorageActions.trash([dotdot]).failed.first, "paths are normalised before the check")
+        let cloud = StorageItem(path: NSHomeDirectory() + "/Library/Mobile Documents/x", label: "icloud", explanation: "", bytes: 1, modified: nil, grade: .safe)
+        XCTAssertTrue(StorageActions.trash([cloud]).failed.first?.reason.contains("cloud") == true)
+        let inTrash = StorageItem(path: NSHomeDirectory() + "/.Trash/x", label: "t", explanation: "", bytes: 1, modified: nil, grade: .safe)
+        XCTAssertEqual(StorageActions.trash([inTrash]).failed.first?.reason, "already in the Trash")
     }
 
     func testTrashMovesAnItemUnderHomeToTheTrash() throws {
