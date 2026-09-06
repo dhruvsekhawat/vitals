@@ -1,5 +1,16 @@
 # Changelog
 
+## 1.0.1 (2026-09-06)
+
+- Releases are signed with Developer ID and notarized. Downloaded builds open with a double-click; no right-click, no quarantine workaround.
+- Swap is judged against physical RAM instead of the size of the swap files, which grow on demand and made the old percentage meaningless.
+- Per-app memory uses physical footprint, matching Activity Monitor, instead of resident size.
+- An app whose CPU is mostly compilers, encoders, or indexers is reported as working hard rather than taking over, with no kill button.
+- Quitting an app never escalates to a kill. If it declines, the panel says so and offers Kill explicitly.
+- Escalations from warning to bad now notify. Verdicts no longer flap while the panel is open.
+- Turning off start at login no longer stops the running app.
+- One-line installer and a universal (Apple silicon and Intel) build.
+
 ## 1.0 (2026-09-06)
 
 First release.
