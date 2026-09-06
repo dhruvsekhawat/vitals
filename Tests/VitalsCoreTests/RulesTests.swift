@@ -11,23 +11,25 @@ final class RulesTests: XCTestCase {
     // MARK: Swap
 
     func testSwapBelowWarnIsNotAnIssue() throws {
-        let s = makeSample(swapTotal: 1000 * MB, swapUsed: 740 * MB)   // 74%
+        // Swap is judged against RAM, not against the swap files (those grow on demand). 16 GB RAM here.
+        let s = makeSample(swapTotal: 4 * GB, swapUsed: 3_900 * MB)   // 24% of RAM, 97% of the files
         XCTAssertNil(issue(s, kind: .swap))
     }
 
     func testSwapAtWarnThresholdWarns() throws {
-        let s = makeSample(swapTotal: 1000 * MB, swapUsed: 750 * MB)   // 75%
+        let s = makeSample(swapTotal: 5 * GB, swapUsed: 4 * GB)   // 25% of RAM
         let i = try XCTUnwrap(issue(s, kind: .swap))
         XCTAssertEqual(i.severity, .warn)
-        XCTAssertEqual(i.title, "Swap is high")
+        XCTAssertEqual(i.title, "Swap is growing")
+        XCTAssertTrue(i.detail.contains("4.0 GB") && i.detail.contains("25% of your RAM"), i.detail)
         XCTAssertEqual(i.key, "swap")
     }
 
     func testSwapAtBadThresholdIsBad() throws {
-        let s = makeSample(swapTotal: 1000 * MB, swapUsed: 900 * MB)   // 90%
+        let s = makeSample(swapTotal: 8 * GB, swapUsed: 8 * GB)   // 50% of RAM
         let i = try XCTUnwrap(issue(s, kind: .swap))
         XCTAssertEqual(i.severity, .bad)
-        XCTAssertEqual(i.title, "Swap is full")
+        XCTAssertEqual(i.title, "Swap is heavy")
     }
 
     // MARK: Disk
@@ -131,8 +133,13 @@ final class RulesTests: XCTestCase {
         _ = rules.evaluate(makeSample(at: T0, procs: [hot(95)]))
         XCTAssertNotNil(issue(makeSample(at: T0.addingTimeInterval(200), procs: [hot(95)]), kind: .runaway, rules: rules))
 
-        // A cool sample clears it.
+        // A cool sample is not reported, but one dip does not reset the clock (hysteresis)...
         XCTAssertNil(issue(makeSample(at: T0.addingTimeInterval(210), procs: [hot(10)]), kind: .runaway, rules: rules))
+        XCTAssertNotNil(issue(makeSample(at: T0.addingTimeInterval(212), procs: [hot(95)]), kind: .runaway, rules: rules), "one dip is noise")
+        // ...three clearly-cool samples in a row do.
+        for dt in [214.0, 216.0, 218.0] {
+            XCTAssertNil(issue(makeSample(at: T0.addingTimeInterval(dt), procs: [hot(10)]), kind: .runaway, rules: rules))
+        }
         // Heating up again starts a fresh 180 s clock: nothing yet.
         XCTAssertNil(issue(makeSample(at: T0.addingTimeInterval(220), procs: [hot(95)]), kind: .runaway, rules: rules))
         XCTAssertNil(issue(makeSample(at: T0.addingTimeInterval(390), procs: [hot(95)]), kind: .runaway, rules: rules))
@@ -237,9 +244,14 @@ final class RulesTests: XCTestCase {
     func testAppHogClearsWhenShareDrops() throws {
         let rules = Rules()
         _ = rules.evaluate(makeSample(at: T0, cores: 8, procs: arc([50, 50, 50, 50, 50, 50])))
-        _ = rules.evaluate(makeSample(at: T0.addingTimeInterval(60), cores: 8, procs: arc([10, 10, 10, 10, 10, 10])))
-        // Back above the line: the clock restarted at +60, so +121 is only 61 s in.
-        XCTAssertNil(issue(makeSample(at: T0.addingTimeInterval(121), cores: 8, procs: arc([50, 50, 50, 50, 50, 50])), kind: .appHog, rules: rules))
+        // Three clearly-low samples reset the clock (one alone would not).
+        for dt in [60.0, 62.0, 64.0] {
+            _ = rules.evaluate(makeSample(at: T0.addingTimeInterval(dt), cores: 8, procs: arc([10, 10, 10, 10, 10, 10])))
+        }
+        // Back above the line: the clock restarted at +66, so +126 is only 60 s in.
+        _ = rules.evaluate(makeSample(at: T0.addingTimeInterval(66), cores: 8, procs: arc([50, 50, 50, 50, 50, 50])))
+        XCTAssertNil(issue(makeSample(at: T0.addingTimeInterval(126), cores: 8, procs: arc([50, 50, 50, 50, 50, 50])), kind: .appHog, rules: rules))
+        XCTAssertNotNil(issue(makeSample(at: T0.addingTimeInterval(187), cores: 8, procs: arc([50, 50, 50, 50, 50, 50])), kind: .appHog, rules: rules))
     }
 
     func testAppHogOnMemoryAloneIsImmediate() throws {
@@ -306,7 +318,7 @@ final class RulesTests: XCTestCase {
     func testBadIssuesComeBeforeWarn() throws {
         // swap bad, disk warn, uptime warn, memory bad, thermal warn.
         let s = makeSample(memoryPressure: .critical,
-                           swapTotal: 1000 * MB, swapUsed: 950 * MB,
+                           swapTotal: 9 * GB, swapUsed: 9 * GB,   // 56% of RAM: bad
                            diskTotal: 1000 * Int64(GB), diskFree: 100 * Int64(GB),
                            uptime: 15 * 86400, thermal: .fair)
         let out = issues(s)
@@ -324,18 +336,47 @@ final class RulesTests: XCTestCase {
         defer { defaults.removePersistentDomain(forName: suite) }
         defaults.removePersistentDomain(forName: suite)
 
-        XCTAssertEqual(Thresholds.load(from: defaults).swapWarn, 75, "untouched suite gives the default")
+        XCTAssertEqual(Thresholds.load(from: defaults).swapWarn, 25, "untouched suite gives the default")
 
-        defaults.set(50.0, forKey: "threshold.swapWarn")
+        defaults.set(20.0, forKey: "threshold.swapWarn")
         defaults.set(7.0, forKey: "threshold.hotFor")
         let t = Thresholds.load(from: defaults)
-        XCTAssertEqual(t.swapWarn, 50)
+        XCTAssertEqual(t.swapWarn, 20)
         XCTAssertEqual(t.hotFor, 7)
-        XCTAssertEqual(t.swapBad, 90, "keys not set keep their default")
+        XCTAssertEqual(t.swapBad, 50, "keys not set keep their default")
 
-        // The override actually moves the boundary: 60% swap now warns.
-        let s = makeSample(swapTotal: 1000 * MB, swapUsed: 600 * MB)
+        // The override actually moves the boundary: 22% of RAM in swap now warns.
+        let s = makeSample(swapTotal: 4 * GB, swapUsed: 3_500 * MB)
         XCTAssertNil(issue(s, kind: .swap, rules: Rules()))
         XCTAssertEqual(issue(s, kind: .swap, rules: Rules(thresholds: t))?.severity, .warn)
+    }
+
+    // MARK: Busy apps and unknown disk
+
+    func testAppMadeOfCompilersIsWorkingHardNotTakingOver() throws {
+        let rules = Rules()
+        // Six clang processes under Xcode.app: 500% of 8 cores = 62.5%, which would be "bad" for a browser.
+        let procs = (0..<6).map { makeProc(pid: 7000 + pid_t($0), path: "/Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/clang", cpuNow: 84) }
+        _ = rules.evaluate(makeSample(at: T0, cores: 8, procs: procs))
+        let out = rules.evaluate(makeSample(at: T0.addingTimeInterval(121), cores: 8, procs: procs))
+        XCTAssertNil(out.first { $0.kind == .appHog })
+        let busy = try XCTUnwrap(out.first { $0.kind == .busy && $0.key == "busy:Xcode" })
+        XCTAssertEqual(busy.severity, .warn)
+        XCTAssertEqual(busy.remedy, .none, "no kill button for a build")
+        XCTAssertEqual(busy.title, "Xcode is working hard")
+        XCTAssertTrue(busy.detail.contains("Normal for a build"), busy.detail)
+    }
+
+    func testUnreadableDiskIsNotReportedAsFull() throws {
+        let s = makeSample(diskTotal: 0, diskFree: 0)
+        XCTAssertNil(issue(s, kind: .disk))
+    }
+
+    func testKnownBusyDaemonsAreIgnoredRightAfterBoot() throws {
+        let rules = Rules()
+        let mds = makeProc(pid: 8000, path: "/System/Library/Frameworks/CoreServices.framework/Frameworks/Metadata.framework/Support/mds_stores", cpuNow: 99)
+        _ = rules.evaluate(makeSample(at: T0, uptime: 60, procs: [mds]))
+        XCTAssertNil(issue(makeSample(at: T0.addingTimeInterval(200), uptime: 260, procs: [mds]), kind: .busy, rules: rules), "still inside the boot grace period")
+        XCTAssertNotNil(issue(makeSample(at: T0.addingTimeInterval(700), uptime: 760, procs: [mds]), kind: .busy, rules: rules))
     }
 }

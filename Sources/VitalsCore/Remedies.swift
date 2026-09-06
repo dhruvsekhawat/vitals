@@ -24,28 +24,32 @@ public enum Remedies {
         return gone
     }
 
-    /// Ask a running application to quit normally so it can save state. If it is still running
-    /// after `grace`, fall back to `terminate` on its processes.
+    /// Ask a running application to quit normally so it can save state. Never escalates to a kill:
+    /// an app that puts up "Save changes?" is doing its job. If it is still running after `grace`
+    /// the caller reports that and the user can choose Kill explicitly.
+    /// - Returns: the app's pids that are gone afterwards (empty if it declined).
     public static func quitApp(named name: String, pids: [pid_t], grace: TimeInterval = 8.0) -> [pid_t] {
-        let matches = NSWorkspace.shared.runningApplications.filter {
-            $0.localizedName == name || $0.bundleURL?.deletingPathExtension().lastPathComponent == name
+        let mine = Set(pids)
+        let matches = NSWorkspace.shared.runningApplications.filter { mine.contains($0.processIdentifier) }
+        guard !matches.isEmpty else {
+            log.notice("\(name): no running application matches its pids; nothing to quit")
+            return []
         }
-        if !matches.isEmpty {
-            for app in matches { app.terminate() }
-            let deadline = Date().addingTimeInterval(grace)
-            while Date() < deadline, matches.contains(where: { !$0.isTerminated }) { Thread.sleep(forTimeInterval: 0.2) }
-            let remaining = pids.filter(alive)
-            if remaining.isEmpty {
-                log.notice("\(name) quit normally")
-                return pids
-            }
-            log.notice("\(name) did not quit within \(grace)s; terminating \(remaining.count) processes")
-            return terminate(remaining)
-        }
-        return terminate(pids)
+        for app in matches { app.terminate() }
+        let deadline = Date().addingTimeInterval(grace)
+        while Date() < deadline, matches.contains(where: { !$0.isTerminated }) { Thread.sleep(forTimeInterval: 0.2) }
+        let gone = pids.filter { !alive($0) }
+        log.notice("\(name): asked to quit, \(gone.count)/\(pids.count) processes gone")
+        return gone
     }
 
-    static func alive(_ pid: pid_t) -> Bool { Darwin.kill(pid, 0) == 0 || errno == EPERM }
+    /// Alive means present and not a zombie. `kill(pid, 0)` alone says yes for zombies, which would make
+    /// a helper whose parent is hung look unkillable.
+    static func alive(_ pid: pid_t) -> Bool {
+        var bsd = proc_bsdinfo()
+        guard proc_pidinfo(pid, PROC_PIDTBSDINFO, 0, &bsd, Int32(MemoryLayout<proc_bsdinfo>.size)) > 0 else { return false }
+        return bsd.pbi_status != UInt32(SZOMB)
+    }
 
     static func ownedByUs(_ pid: pid_t) -> Bool {
         var bsd = proc_bsdinfo()
@@ -55,7 +59,8 @@ public enum Remedies {
 
     // MARK: - Disk
 
-    /// A cache that rebuilds itself. Nothing here holds user data.
+    /// A cache that rebuilds itself. Nothing here holds user data. The directory's contents are
+    /// removed, not the directory, so a symlinked cache keeps its link.
     public struct PurgeTarget: Sendable {
         public let label: String
         public let path: String          // absolute, or "~/…"
@@ -100,10 +105,21 @@ public enum Remedies {
         var report = PurgeReport()
         let before = freeBytes()
         let fm = FileManager.default
-        for t in targets where fm.fileExists(atPath: t.resolved) {
+        for t in targets {
+            var isDir: ObjCBool = false
+            guard fm.fileExists(atPath: t.resolved, isDirectory: &isDir) else { continue }
             progress("Clearing \(t.label)")
-            do { try fm.removeItem(atPath: t.resolved); report.removed.append(t.label) }
-            catch { report.failed.append(t.label); log.error("purge \(t.label): \(error.localizedDescription)") }
+            do {
+                if isDir.boolValue {
+                    for child in try fm.contentsOfDirectory(atPath: t.resolved) { try fm.removeItem(atPath: t.resolved + "/" + child) }
+                } else {
+                    try fm.removeItem(atPath: t.resolved)
+                }
+                report.removed.append(t.label)
+            } catch {
+                report.failed.append(t.label)
+                log.error("purge \(t.label): \(error.localizedDescription)")
+            }
         }
         for c in commands where Shell.which(c.argv[0]) != nil {
             progress("Running \(c.label)")
@@ -121,7 +137,8 @@ public enum Remedies {
     // MARK: - Restart
 
     /// Shows the system restart confirmation. Uses the documented Apple Event to loginwindow
-    /// (Technical Q&A QA1134); falls back to System Events scripting.
+    /// (Technical Q&A QA1134); falls back to System Events scripting. Either path can prompt
+    /// for Automation permission the first time; `NSAppleEventsUsageDescription` explains why.
     public static func requestRestart() -> Error? {
         let target = NSAppleEventDescriptor(bundleIdentifier: "com.apple.loginwindow")
         let event = NSAppleEventDescriptor(eventClass: AEEventClass(0x61657674 /* 'aevt' */),
@@ -146,13 +163,15 @@ public enum Remedies {
     }
 }
 
-/// Minimal subprocess runner. No shell, no PATH tricks beyond the usual tool locations.
+/// Minimal subprocess runner. No shell, a fixed search path, output drained as it arrives so a
+/// chatty child can never block on a full pipe.
 public enum Shell {
     public struct Result { public let status: Int32; public let output: String; public var ok: Bool { status == 0 } }
 
     static let searchPath = ["/opt/homebrew/bin", "/usr/local/bin", "/usr/bin", "/bin"]
 
     public static func which(_ tool: String) -> String? {
+        if tool.hasPrefix("/") { return FileManager.default.isExecutableFile(atPath: tool) ? tool : nil }
         for dir in searchPath {
             let p = dir + "/" + tool
             if FileManager.default.isExecutableFile(atPath: p) { return p }
@@ -168,14 +187,21 @@ public enum Shell {
         p.environment = ["PATH": searchPath.joined(separator: ":"), "HOME": NSHomeDirectory()]
         let pipe = Pipe()
         p.standardOutput = pipe; p.standardError = pipe
+        let lock = NSLock()
+        var collected = Data()
+        pipe.fileHandleForReading.readabilityHandler = { h in
+            let d = h.availableData
+            lock.lock(); collected.append(d); lock.unlock()
+        }
         let done = DispatchSemaphore(value: 0)
         p.terminationHandler = { _ in done.signal() }
         do { try p.run() } catch { return Result(status: 126, output: error.localizedDescription) }
         if done.wait(timeout: .now() + timeout) == .timedOut {
             p.terminate()
-            _ = done.wait(timeout: .now() + 2)
+            if done.wait(timeout: .now() + 2) == .timedOut { Darwin.kill(p.processIdentifier, SIGKILL); _ = done.wait(timeout: .now() + 1) }
         }
-        let out = String(decoding: pipe.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
-        return Result(status: p.terminationStatus, output: out)
+        pipe.fileHandleForReading.readabilityHandler = nil
+        lock.lock(); collected.append(pipe.fileHandleForReading.availableData); let out = collected; lock.unlock()
+        return Result(status: p.terminationStatus, output: String(decoding: out, as: UTF8.self))
     }
 }

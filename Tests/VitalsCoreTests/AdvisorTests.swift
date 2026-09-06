@@ -24,7 +24,7 @@ final class AdvisorTests: XCTestCase {
 
     func testBenignMachineHasNothingToFix() throws {
         let out = recommend(makeSample())
-        XCTAssertEqual(out, [Recommendation("Nothing to fix.")])
+        XCTAssertEqual(out.map(\.text), ["Nothing to fix."])
         XCTAssertEqual(out[0].action, .none)
     }
 
@@ -63,17 +63,17 @@ final class AdvisorTests: XCTestCase {
     // MARK: Restart
 
     func testFullSwapRecommendsRestartBecauseOfPaging() throws {
-        let out = recommend(makeSample(swapTotal: 100, swapUsed: 92))
+        let out = recommend(makeSample(swapUsed: 9 * GB))   // 56% of 16 GB RAM
         XCTAssertEqual(out.count, 1)
         XCTAssertEqual(out[0].action, .restart)
         XCTAssertTrue(out[0].text.contains("paging"), out[0].text)
     }
 
     func testHighSwapRecommendsRestartWithPercent() throws {
-        let out = recommend(makeSample(swapTotal: 100, swapUsed: 80))
+        let out = recommend(makeSample(swapUsed: 5 * GB))   // 31% of 16 GB RAM
         XCTAssertEqual(out.count, 1)
         XCTAssertEqual(out[0].action, .restart)
-        XCTAssertTrue(out[0].text.contains("80%"), out[0].text)
+        XCTAssertTrue(out[0].text.contains("31%"), out[0].text)
         XCTAssertFalse(out[0].text.contains("paging"), out[0].text)
     }
 
@@ -156,7 +156,7 @@ final class AdvisorTests: XCTestCase {
         let out = recommend(makeSample(), recurrences: [r])
         XCTAssertEqual(out.count, 1)
         let text = out[0].text
-        XCTAssertTrue(text.contains("come back 4 times"), text)
+        XCTAssertTrue(text.contains("4 times in 30 days"), text)
         XCTAssertTrue(text.contains("extension"), text)
         XCTAssertEqual(out[0].action, .none)
     }
@@ -165,7 +165,7 @@ final class AdvisorTests: XCTestCase {
         let r = Recurrence(key: "orphan:Claude Code", title: "Leaked Claude Code processes", kind: .orphan, count: 2, last: T0)
         let out = recommend(makeSample(), recurrences: [r])
         XCTAssertEqual(out.count, 1)
-        XCTAssertTrue(out[0].text.contains("come back 2 times"), out[0].text)
+        XCTAssertTrue(out[0].text.contains("2 times in 30 days"), out[0].text)
         XCTAssertTrue(out[0].text.contains("parent app"), out[0].text)
     }
 
@@ -183,7 +183,7 @@ final class AdvisorTests: XCTestCase {
         XCTAssertEqual(out.filter { $0.action == .restart }.count, 1)
         XCTAssertEqual(out.filter { $0.action == .freeDisk }.count, 1)
         XCTAssertNotNil(out.first { $0.text.contains("Plug in") })
-        XCTAssertNotNil(out.first { $0.text.contains("come back 3 times") })
+        XCTAssertNotNil(out.first { $0.text.contains("3 times in 30 days") })
         XCTAssertNil(out.first { $0.text.contains("no single culprit") }, "runaway and appHog are the culprits")
     }
 }

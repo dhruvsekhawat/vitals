@@ -32,7 +32,7 @@ final class Pipeline: @unchecked Sendable {
 
     struct Result {
         let view: ViewState
-        /// Issues that are new and past their notification cooldown.
+        /// Issues worth a notification right now: new ones past cooldown, and escalations.
         let notify: [Issue]
     }
 
@@ -40,30 +40,39 @@ final class Pipeline: @unchecked Sendable {
         dispatchPrecondition(condition: .onQueue(queue))
         let s = sampler.sample()
         let issues = rules.evaluate(s)
-        let fresh = history.reconcile(issues, at: s.at)
+        let rec = history.reconcile(issues, at: s.at)
         history.snapshot(s)
         let recurrences = history.recurrences()
         let last = history.lastClosedIncident
         let recs = Advisor.recommend(sample: s, issues: issues, recurrences: recurrences, lastIncident: last, thresholds: rules.thresholds)
-        let notify = fresh.filter { $0.severity >= .warn && history.shouldNotify(key: $0.key, at: s.at) }
+        var notify = rec.opened.filter { $0.severity >= .warn && history.shouldNotify(key: $0.key, at: s.at) }
+        notify += rec.escalated.filter { history.shouldNotify(key: $0.key, at: s.at, escalation: true) }
         let view = ViewState(sample: s, issues: issues, topApps: AppUsage.top(s.procs, cores: s.cores),
                              recommendations: recs, recurrences: recurrences, trend24h: history.trend(hours: 24), lastIncident: last)
         return Result(view: view, notify: notify)
     }
 
-    /// - Returns: number of processes that are gone afterwards.
-    func apply(_ issues: [Issue]) -> Int {
+    struct Applied { var gone = 0; var refused: [String] = [] }
+
+    /// Apply each issue's remedy. A graceful quit that is declined is reported, not escalated.
+    func apply(_ issues: [Issue]) -> Applied {
         dispatchPrecondition(condition: .onQueue(queue))
-        var gone = 0
+        var result = Applied()
+        var cleared: [String] = []
         for i in issues {
             switch i.remedy {
-            case .kill(let pids): gone += Remedies.terminate(pids).count
-            case .quitApp(let name, let pids): gone += Remedies.quitApp(named: name, pids: pids).count
+            case .kill(let pids):
+                result.gone += Remedies.terminate(pids).count
+                cleared.append(i.key)
+            case .quitApp(let name, let pids):
+                let gone = Remedies.quitApp(named: name, pids: pids)
+                result.gone += gone.count
+                if gone.isEmpty { result.refused.append(name) } else { cleared.append(i.key) }
             case .none: break
             }
         }
-        history.markCleared(keys: issues.map(\.key), at: Date())
-        return gone
+        history.markCleared(keys: cleared, at: Date())
+        return result
     }
 
     func wake() {
@@ -78,7 +87,7 @@ final class Pipeline: @unchecked Sendable {
     }
 }
 
-/// Owns the sampling loop and the UI-facing state. Main actor only.
+/// Owns the sampling loop and the UI-facing state. Main actor only. Never blocks.
 @MainActor
 final class Engine: ObservableObject {
     @Published private(set) var state = ViewState()
@@ -94,12 +103,14 @@ final class Engine: ObservableObject {
     private var timer: DispatchSourceTimer?
     private var ticks = 0
     private var observers: [NSObjectProtocol] = []
+    /// Apps that declined a graceful quit this session. Their issue row offers Kill instead.
+    private var quitRefused: Set<String> = []
     private let log = Logger(subsystem: "com.dhruv.vitals", category: "engine")
 
     /// - Parameter headless: no timer, notifications, or login-item changes (used by `--snapshot`).
     init(headless: Bool = false) {
         pipeline = Pipeline(thresholds: Thresholds.load(from: .standard), historyURL: History.defaultURL)
-        notifier = headless ? nil : Notifier()
+        notifier = headless ? nil : Notifier.make()
         notifier?.onClear = { [weak self] key in self?.clear(key: key) }
 
         tick()
@@ -118,7 +129,7 @@ final class Engine: ObservableObject {
             self.log.notice("woke from sleep; timers reset")
         })
         observers.append(NotificationCenter.default.addObserver(forName: ProcessInfo.thermalStateDidChangeNotification, object: nil, queue: .main) { [weak self] _ in
-            self?.tick()
+            Task { @MainActor in self?.tick() }
         })
     }
 
@@ -154,7 +165,17 @@ final class Engine: ObservableObject {
 
     private func publish(_ r: Pipeline.Result) {
         let wasOnBattery = state.sample?.battery?.onBattery
-        state = r.view
+        var view = r.view
+        // An app that refused to quit gets an explicit Kill instead of another polite request.
+        if !quitRefused.isEmpty {
+            view.issues = view.issues.map { i in
+                if case .quitApp(let name, let pids) = i.remedy, quitRefused.contains(name) {
+                    return Issue(kind: i.kind, severity: i.severity, title: i.title, detail: i.detail + ". It declined to quit", remedy: .kill(pids), key: i.key)
+                }
+                return i
+            }
+        }
+        state = view
         for i in r.notify { notifier?.post(i) }
         if wasOnBattery != r.view.sample?.battery?.onBattery { reschedule() }
         ticks += 1
@@ -167,16 +188,22 @@ final class Engine: ObservableObject {
     func clear(key: String? = nil) {
         let targets = state.issues.filter { $0.remedy.isActionable && (key == nil || $0.key == key) }
         guard !targets.isEmpty, busy == nil else { return }
-        busy = targets.count == 1 ? "\(targets[0].remedy.verb)ing \(targets[0].title)" : "Clearing \(targets.count) issues"
+        busy = targets.count == 1 ? "\(targets[0].remedy.verb == "Kill" ? "Stopping" : "Quitting") \(targets[0].title)" : "Clearing \(targets.count) issues"
         let p = pipeline
         p.queue.async { [weak self] in
-            let gone = p.apply(targets)
+            let applied = p.apply(targets)
             Thread.sleep(forTimeInterval: 0.5)
             let r = p.run()
             Task { @MainActor in
-                self?.busy = nil
-                self?.lastResult = gone == 1 ? "Stopped 1 process" : "Stopped \(gone) processes"
-                self?.publish(r)
+                guard let self else { return }
+                self.busy = nil
+                self.quitRefused.formUnion(applied.refused)
+                if !applied.refused.isEmpty {
+                    self.lastResult = "\(applied.refused.joined(separator: ", ")) did not quit. Save your work there, or use Kill."
+                } else {
+                    self.lastResult = applied.gone == 1 ? "Stopped 1 process" : "Stopped \(applied.gone) processes"
+                }
+                self.publish(r)
             }
         }
     }
@@ -197,22 +224,37 @@ final class Engine: ObservableObject {
     }
 
     func restart() {
-        if let err = Remedies.requestRestart() { lastResult = err.localizedDescription }
+        busy = "Asking macOS to restart"
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            let err = Remedies.requestRestart()
+            Task { @MainActor in
+                self?.busy = nil
+                if let err { self?.lastResult = err.localizedDescription }
+            }
+        }
     }
 
     func setLaunchAtLogin(_ on: Bool) {
-        do {
-            try LoginItem.set(on, executable: Bundle.main.executablePath ?? CommandLine.arguments[0])
-            UserDefaults.standard.set(!on, forKey: "loginItemDeclined")
-        } catch {
-            lastResult = "Start at login failed: \(error.localizedDescription)"
+        let exe = Bundle.main.executablePath ?? CommandLine.arguments[0]
+        busy = on ? "Enabling start at login" : "Disabling start at login"
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            var failure: String?
+            do { try LoginItem.set(on, executable: exe) } catch { failure = error.localizedDescription }
+            Task { @MainActor in
+                guard let self else { return }
+                self.busy = nil
+                self.launchAtLogin = LoginItem.isEnabled
+                if let failure { self.lastResult = "Start at login failed: \(failure)" }
+                else { UserDefaults.standard.set(!on, forKey: "loginItemDeclined") }
+            }
         }
-        launchAtLogin = LoginItem.isEnabled
     }
 
     func quit() {
         let p = pipeline
-        p.queue.sync { p.save() }
-        NSApp.terminate(nil)
+        p.queue.async {
+            p.save()
+            Task { @MainActor in NSApp.terminate(nil) }
+        }
     }
 }

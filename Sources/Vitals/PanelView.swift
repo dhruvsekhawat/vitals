@@ -65,11 +65,13 @@ struct PanelView: View {
                 tone: s.load1 > Double(s.cores) * 1.5 ? .warn : .ok)
             row("Memory", "\(Int(s.memPct))%", sub: memSub(s),
                 tone: s.memoryPressure == .critical ? .bad : s.memoryPressure == .warning ? .warn : .ok)
-            row("Swap", s.swapTotal == 0 ? "none" : "\(Int(s.swapPct))%",
-                sub: s.swapTotal == 0 ? "" : "\(Format.bytes(s.swapUsed)) of \(Format.bytes(s.swapTotal))",
-                tone: s.swapPct >= 90 ? .bad : s.swapPct >= 75 ? .warn : .ok)
-            row("Disk", "\(Format.bytes(UInt64(s.diskFree))) free", sub: "\(Int(100 - s.diskFreePct))% used",
-                tone: s.diskFreePct < 8 ? .bad : s.diskFreePct < 15 ? .warn : .ok)
+            row("Swap", s.swapUsed == 0 ? "none" : Format.bytes(s.swapUsed),
+                sub: s.swapUsed == 0 ? "" : "\(Int(s.swapPct))% of RAM",
+                tone: s.swapPct >= 50 ? .bad : s.swapPct >= 25 ? .warn : .ok)
+            if s.diskKnown {
+                row("Disk", "\(Format.bytes(UInt64(s.diskFree))) free", sub: "\(Int(100 - s.diskFreePct))% used",
+                    tone: s.diskFreePct < 8 ? .bad : s.diskFreePct < 15 ? .warn : .ok)
+            }
             row("Uptime", Format.uptime(s.uptime), sub: "",
                 tone: s.uptimeDays >= 30 ? .bad : s.uptimeDays >= 14 ? .warn : .ok)
             if let b = s.battery {
@@ -146,7 +148,7 @@ struct PanelView: View {
     private func helpText(_ r: Remedy) -> String {
         switch r {
         case .kill(let p): return p.count == 1 ? "Stop this process (SIGTERM, then SIGKILL)" : "Stop these \(p.count) processes"
-        case .quitApp(let name, _): return "Ask \(name) to quit normally so it can save its state"
+        case .quitApp(let name, _): return "Ask \(name) to quit normally so it can save its state. It is never force-killed from here."
         case .none: return ""
         }
     }
@@ -160,7 +162,7 @@ struct PanelView: View {
                 }
             }
             if let t = st.trend24h {
-                Text(String(format: "Last 24h: load avg %.1f, swap peak %d%%, disk low %d%% free", t.avgLoad, Int(t.peakSwap), Int(t.minDiskFree)))
+                Text(String(format: "Last 24h: load avg %.1f, swap peak %@, disk low %d%% free", t.avgLoad, t.peakSwap == 0 ? "none" : Format.bytes(t.peakSwap), Int(t.minDiskFree)))
                     .foregroundStyle(.tertiary).padding(.top, 2).fixedSize(horizontal: false, vertical: true)
             }
         }
@@ -180,6 +182,7 @@ struct PanelView: View {
                     .help("Ask macOS to restart. You get the usual confirmation.")
                 Spacer()
                 Button("Quit") { engine.quit() }.buttonStyle(.plain).foregroundStyle(.secondary)
+                    .disabled(engine.busy != nil)
                     .help("Quit Vitals until next login")
             }
             .controlSize(.small)

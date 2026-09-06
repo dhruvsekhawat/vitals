@@ -114,7 +114,8 @@ final class RemediesTests: XCTestCase {
             commands: [],
             progress: { progress.append($0) })
 
-        XCTAssertFalse(FileManager.default.fileExists(atPath: cache.path), "target directory should be gone")
+        XCTAssertTrue(FileManager.default.fileExists(atPath: cache.path), "the directory stays (a symlinked cache keeps its link)")
+        XCTAssertEqual(try FileManager.default.contentsOfDirectory(atPath: cache.path), [], "but its contents are gone")
         XCTAssertEqual(report.removed, ["Test cache"])
         XCTAssertTrue(report.failed.isEmpty, "\(report.failed)")
         XCTAssertGreaterThanOrEqual(report.freedBytes, 0)
@@ -133,7 +134,7 @@ final class RemediesTests: XCTestCase {
 
         let report = Remedies.purgeCaches(targets: [Remedies.PurgeTarget("Tilde cache", "~/" + rel)], commands: [], progress: { _ in })
         XCTAssertEqual(report.removed, ["Tilde cache"])
-        XCTAssertFalse(FileManager.default.fileExists(atPath: abs))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: abs), "emptied, not removed")
     }
 
     func testPurgeCachesRunsCommandsOnlyWhenInstalled() {

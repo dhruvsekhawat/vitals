@@ -87,7 +87,14 @@ public struct Sample: Sendable {
     }
 
     public var memPct: Double { memTotal == 0 ? 0 : Double(memUsed) / Double(memTotal) * 100 }
-    public var swapPct: Double { swapTotal == 0 ? 0 : Double(swapUsed) / Double(swapTotal) * 100 }
+    /// Swap in use as a percent of physical RAM. Can exceed 100.
+    ///
+    /// Not used/total: macOS grows swap files on demand, so that ratio sits near 100% whenever
+    /// any swap exists and says nothing about memory health. Relative to RAM it means something:
+    /// 25% is noticeable, 50% is a machine that is paging constantly.
+    public var swapPct: Double { memTotal == 0 ? 0 : Double(swapUsed) / Double(memTotal) * 100 }
+    /// Free space as a percent of the volume. 0 when the volume could not be read; callers skip the disk rule then.
     public var diskFreePct: Double { diskTotal == 0 ? 0 : Double(diskFree) / Double(diskTotal) * 100 }
+    public var diskKnown: Bool { diskTotal > 0 }
     public var uptimeDays: Double { uptime / 86400 }
 }

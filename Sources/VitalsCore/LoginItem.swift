@@ -16,28 +16,50 @@ public enum LoginItem {
 
     public static var isEnabled: Bool { FileManager.default.fileExists(atPath: plistPath) }
 
+    /// True when this process was started by launchd as the agent. Booting the job out from
+    /// inside it would kill us mid-operation.
+    public static var isCurrentProcessTheAgent: Bool {
+        ProcessInfo.processInfo.environment["XPC_SERVICE_NAME"] == label
+    }
+
+    public struct Failure: Error, LocalizedError {
+        public let message: String
+        public var errorDescription: String? { message }
+    }
+
+    /// Enable or disable. Safe to call from the agent itself. Blocking: runs `launchctl`.
     public static func set(_ on: Bool, executable: String) throws {
         try? SMAppService.mainApp.unregister()   // never let two mechanisms launch it
+        let fm = FileManager.default
         if on {
-            let xml = """
-            <?xml version="1.0" encoding="UTF-8"?>
-            <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-            <plist version="1.0"><dict>
-                <key>Label</key><string>\(label)</string>
-                <key>ProgramArguments</key><array><string>\(executable)</string></array>
-                <key>RunAtLoad</key><true/>
-                <key>KeepAlive</key><dict><key>SuccessfulExit</key><false/></dict>
-                <key>ThrottleInterval</key><integer>5</integer>
-                <key>ProcessType</key><string>Interactive</string>
-            </dict></plist>
-            """
-            try FileManager.default.createDirectory(atPath: (plistPath as NSString).deletingLastPathComponent, withIntermediateDirectories: true)
-            try xml.write(toFile: plistPath, atomically: true, encoding: .utf8)
-            _ = Shell.run(["launchctl", "bootstrap", "gui/\(getuid())", plistPath], timeout: 10)
+            let plist: [String: Any] = [
+                "Label": label,
+                "ProgramArguments": [executable],
+                "RunAtLoad": true,
+                "KeepAlive": ["SuccessfulExit": false],
+                "ThrottleInterval": 5,
+                "ProcessType": "Interactive",
+            ]
+            let data = try PropertyListSerialization.data(fromPropertyList: plist, format: .xml, options: 0)
+            try fm.createDirectory(atPath: (plistPath as NSString).deletingLastPathComponent, withIntermediateDirectories: true)
+            try data.write(to: URL(fileURLWithPath: plistPath), options: .atomic)
+            if !isCurrentProcessTheAgent {
+                let r = Shell.run(["launchctl", "bootstrap", "gui/\(getuid())", plistPath], timeout: 10)
+                // "already bootstrapped" (EEXIST, status 37) is fine; anything else is not.
+                if !r.ok && r.status != 37 && !r.output.contains("already") {
+                    try? fm.removeItem(atPath: plistPath)
+                    throw Failure(message: "launchctl bootstrap failed: \(r.output.trimmingCharacters(in: .whitespacesAndNewlines))")
+                }
+            }
             log.notice("login item enabled")
-        } else if isEnabled {
-            _ = Shell.run(["launchctl", "bootout", "gui/\(getuid())", plistPath], timeout: 10)
-            try FileManager.default.removeItem(atPath: plistPath)
+        } else {
+            guard isEnabled else { return }
+            // Remove the file first so the state on disk is right even if we die below.
+            try fm.removeItem(atPath: plistPath)
+            if !isCurrentProcessTheAgent {
+                _ = Shell.run(["launchctl", "bootout", "gui/\(getuid())/\(label)"], timeout: 10)
+            }
+            // If we are the agent, the loaded job simply ends at logout and will not return.
             log.notice("login item disabled")
         }
     }

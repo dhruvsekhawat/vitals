@@ -89,12 +89,18 @@ defaults write com.dhruv.vitals threshold.hotCPU 90
 | `threshold.appHogCPUShareBad` | 60 | percent of the whole machine that is marked bad |
 | `threshold.appHogFor` | 120 | seconds an app must hold that share to be reported |
 | `threshold.appHogMemShare` | 30 | percent of physical RAM an app may hold before it is reported |
-| `threshold.swapWarn` | 75 | percent of swap in use that triggers a warning |
-| `threshold.swapBad` | 90 | percent of swap in use that is marked bad |
+| `threshold.swapWarn` | 25 | swap in use as a percent of physical RAM that triggers a warning |
+| `threshold.swapBad` | 50 | swap in use as a percent of physical RAM that is marked bad |
 | `threshold.diskWarnFreePct` | 15 | free disk percent below which a warning is raised |
 | `threshold.diskBadFreePct` | 8 | free disk percent below which the disk is marked bad |
 | `threshold.uptimeWarnDays` | 14 | days without a restart that trigger a warning |
 | `threshold.uptimeBadDays` | 30 | days without a restart that are marked bad |
+| `threshold.lifetimeHotCPU` | 75 | lifetime average CPU that flags a long-running process at once |
+| `threshold.lifetimeMinAge` | 1800 | seconds a process must have run for the lifetime rule to apply |
+| `threshold.bootGrace` | 600 | seconds after boot during which system indexers are left alone |
+| `threshold.coolSamples` | 3 | consecutive quiet samples before a "stuck" or "hog" clock resets |
+
+Swap is measured against RAM on purpose. macOS grows its swap files on demand, so "percent of swap used" sits near 100% whenever any swap exists and tells you nothing. Four gigabytes swapped on a 16 GB machine is worth a warning; eight is a machine that is paging constantly.
 
 ## Signing a build for other people
 

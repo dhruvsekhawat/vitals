@@ -60,7 +60,7 @@ final class SamplerIntegrationTests: XCTestCase {
         spawned.append(yes)
         let pid = yes.processIdentifier
 
-        let sampler = Sampler(readArgs: false)
+        let sampler = Sampler(readArgsFor: { _, _ in false })
         Thread.sleep(forTimeInterval: 0.5)
         _ = sampler.sample()                      // establishes the CPU-time baseline
         Thread.sleep(forTimeInterval: 1.5)
@@ -84,7 +84,7 @@ final class SamplerIntegrationTests: XCTestCase {
             .count
         XCTAssertGreaterThanOrEqual(psCount, 10)
 
-        let ours = Sampler(readArgs: false).sample().procs.count
+        let ours = Sampler(readArgsFor: { _, _ in false }).sample().procs.count
         let tolerance = Int((Double(psCount) * 0.15).rounded(.up))
         XCTAssertLessThanOrEqual(abs(ours - psCount), tolerance,
                                  "sampler saw \(ours) processes, ps saw \(psCount) for uid \(uid)")

@@ -12,7 +12,12 @@ final class Notifier: NSObject, UNUserNotificationCenterDelegate {
     private let center = UNUserNotificationCenter.current()
     private let log = Logger(subsystem: "com.dhruv.vitals", category: "notify")
 
-    override init() {
+    /// `UNUserNotificationCenter` raises when there is no bundle (`swift run`). Returns nil then.
+    static func make() -> Notifier? {
+        Bundle.main.bundleIdentifier == nil ? nil : Notifier()
+    }
+
+    private override init() {
         super.init()
         center.delegate = self
         let clear = UNNotificationAction(identifier: Self.clearAction, title: "Clear", options: [])
@@ -33,7 +38,7 @@ final class Notifier: NSObject, UNUserNotificationCenterDelegate {
         c.sound = issue.severity == .bad ? .default : nil
         c.categoryIdentifier = issue.remedy.isActionable ? Self.category : ""
         c.userInfo = ["key": issue.key]
-        c.interruptionLevel = issue.severity == .bad ? .timeSensitive : .active
+        c.interruptionLevel = .active   // time-sensitive needs an entitlement this app does not carry
         center.add(UNNotificationRequest(identifier: issue.key, content: c, trigger: nil)) { err in
             if let err { self.log.error("post: \(err.localizedDescription)") }
         }

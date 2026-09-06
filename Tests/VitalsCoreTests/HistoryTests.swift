@@ -25,14 +25,14 @@ final class HistoryTests: XCTestCase {
         let h = History(url: nil)
 
         let fresh1 = h.reconcile([swapWarn], at: T0)
-        XCTAssertEqual(fresh1.map(\.key), ["swap"])
+        XCTAssertEqual(fresh1.opened.map(\.key), ["swap"])
         XCTAssertEqual(h.openIncidents.count, 1)
         XCTAssertEqual(h.openIncidents[0].openedAt, T0)
         XCTAssertNil(h.openIncidents[0].closedAt)
         XCTAssertFalse(h.openIncidents[0].clearedByUser)
 
         let fresh2 = h.reconcile([swapWarn], at: T0.addingTimeInterval(10))
-        XCTAssertTrue(fresh2.isEmpty)
+        XCTAssertTrue(fresh2.opened.isEmpty)
         XCTAssertEqual(h.incidents.count, 1)
         XCTAssertEqual(h.openIncidents.count, 1)
 
@@ -42,11 +42,44 @@ final class HistoryTests: XCTestCase {
         XCTAssertEqual(h.incidents[0].closedAt, T0.addingTimeInterval(20))
         XCTAssertEqual(h.lastClosedIncident?.key, "swap")
 
-        let fresh3 = h.reconcile([swapWarn], at: T0.addingTimeInterval(30))
-        XCTAssertEqual(fresh3.map(\.key), ["swap"])
+        let fresh3 = h.reconcile([swapWarn], at: T0.addingTimeInterval(400))
+        XCTAssertEqual(fresh3.opened.map(\.key), ["swap"])
         XCTAssertEqual(h.incidents.count, 2, "a recurrence is a new incident")
         XCTAssertEqual(h.openIncidents.count, 1)
-        XCTAssertEqual(h.openIncidents[0].openedAt, T0.addingTimeInterval(30))
+        XCTAssertEqual(h.openIncidents[0].openedAt, T0.addingTimeInterval(400))
+    }
+
+    func testReopensRecentlyClosedIncidentInsteadOfMintingANewOne() throws {
+        let h = History(url: nil)
+        h.reconcile([swapWarn], at: T0)
+        h.reconcile([], at: T0.addingTimeInterval(20))
+        XCTAssertEqual(h.incidents[0].closedAt, T0.addingTimeInterval(20))
+
+        let back = h.reconcile([swapWarn], at: T0.addingTimeInterval(20 + History.reopenWindow - 1))
+        XCTAssertTrue(back.opened.isEmpty, "a flap is not news")
+        XCTAssertEqual(h.incidents.count, 1)
+        XCTAssertEqual(h.openIncidents.count, 1)
+        XCTAssertEqual(h.openIncidents[0].openedAt, T0, "same incident, original start")
+        XCTAssertNil(h.openIncidents[0].closedAt)
+
+        // But one the user cleared is never silently reopened.
+        h.markCleared(keys: ["swap"], at: T0.addingTimeInterval(400))
+        let after = h.reconcile([swapWarn], at: T0.addingTimeInterval(410))
+        XCTAssertEqual(after.opened.map(\.key), ["swap"])
+        XCTAssertEqual(h.incidents.count, 2)
+    }
+
+    func testReconcileReportsEscalation() throws {
+        let h = History(url: nil)
+        XCTAssertTrue(h.reconcile([swapWarn], at: T0).escalated.isEmpty)
+        let r = h.reconcile([swapBad], at: T0.addingTimeInterval(10))
+        XCTAssertEqual(r.escalated.map(\.key), ["swap"])
+        XCTAssertTrue(r.opened.isEmpty)
+        XCTAssertTrue(h.reconcile([swapBad], at: T0.addingTimeInterval(20)).escalated.isEmpty, "only reported once")
+        XCTAssertTrue(h.reconcile([swapWarn], at: T0.addingTimeInterval(30)).escalated.isEmpty, "going down is not an escalation")
+        XCTAssertTrue(h.shouldNotify(key: "swap", at: T0))
+        XCTAssertFalse(h.shouldNotify(key: "swap", at: T0.addingTimeInterval(1)))
+        XCTAssertTrue(h.shouldNotify(key: "swap", at: T0.addingTimeInterval(2), escalation: true), "escalation bypasses the cooldown")
     }
 
     func testReconcileRatchetsSeverityUpAndKeepsTitleCurrent() throws {
@@ -73,7 +106,7 @@ final class HistoryTests: XCTestCase {
                           remedy: .kill([100, 101, 102]), key: "orphan:Claude Code")
         h.reconcile([a], at: T0)
         let fresh = h.reconcile([b], at: T0.addingTimeInterval(5))
-        XCTAssertTrue(fresh.isEmpty)
+        XCTAssertTrue(fresh.opened.isEmpty)
         XCTAssertEqual(h.incidents.count, 1)
         XCTAssertEqual(h.incidents[0].detail, "3 left behind")
     }
@@ -129,36 +162,38 @@ final class HistoryTests: XCTestCase {
 
     // MARK: recurrences
 
-    func testRecurrencesCountTrackedKindsOnly() throws {
+    func testRecurrencesCountTrackedKindsOnlyAndGroupByFamily() throws {
         let h = History(url: nil)
-        let runaway = makeIssue(kind: .runaway, severity: .bad, title: "Foo is stuck", key: "runaway:Foo#1")
+        // Same program stuck under a new pid each time: one family.
+        let runaways = (1...3).map { makeIssue(kind: .runaway, severity: .bad, title: "Foo is stuck", key: "runaway:Foo#\($0)") }
         let hogV1 = makeIssue(kind: .appHog, severity: .warn, title: "Arc is taking over", key: "appHog:Arc")
         let hogV2 = makeIssue(kind: .appHog, severity: .warn, title: "Arc is taking over (again)", key: "appHog:Arc")
 
-        // Three swap incidents and three runaway incidents, opened at +0, +120, +240.
+        // Three swap incidents and three runaway incidents, opened at +0, +600, +1200 (past the reopen window).
         for n in 0..<3 {
-            h.reconcile([swapWarn, runaway], at: T0.addingTimeInterval(Double(n) * 120))
-            h.reconcile([], at: T0.addingTimeInterval(Double(n) * 120 + 60))
+            h.reconcile([swapWarn, runaways[n]], at: T0.addingTimeInterval(Double(n) * 600))
+            h.reconcile([], at: T0.addingTimeInterval(Double(n) * 600 + 60))
         }
-        // Two appHog incidents, opened at +300 and +400, newest with a different title.
-        h.reconcile([hogV1], at: T0.addingTimeInterval(300))
-        h.reconcile([], at: T0.addingTimeInterval(350))
-        h.reconcile([hogV2], at: T0.addingTimeInterval(400))
+        // Two appHog incidents, opened at +1500 and +1900, newest with a different title.
+        h.reconcile([hogV1], at: T0.addingTimeInterval(1500))
+        h.reconcile([], at: T0.addingTimeInterval(1550))
+        h.reconcile([hogV2], at: T0.addingTimeInterval(1900))
         XCTAssertEqual(h.incidents.count, 8)
 
-        let recs = h.recurrences(now: T0.addingTimeInterval(1000))
-        XCTAssertEqual(recs.map(\.key), ["runaway:Foo#1", "appHog:Arc"], "sorted by count desc; swap is not tracked")
+        let now = T0.addingTimeInterval(3000)
+        let recs = h.recurrences(now: now)
+        XCTAssertEqual(recs.map(\.key), ["runaway:Foo", "appHog:Arc"], "sorted by count desc; swap is not tracked; pids collapsed")
         XCTAssertEqual(recs[0].count, 3)
-        XCTAssertEqual(recs[0].last, T0.addingTimeInterval(240))
+        XCTAssertEqual(recs[0].last, T0.addingTimeInterval(1200))
         XCTAssertEqual(recs[0].kind, .runaway)
         XCTAssertEqual(recs[1].count, 2)
-        XCTAssertEqual(recs[1].last, T0.addingTimeInterval(400))
+        XCTAssertEqual(recs[1].last, T0.addingTimeInterval(1900))
         XCTAssertEqual(recs[1].title, "Arc is taking over (again)", "title comes from the newest incident")
 
-        XCTAssertEqual(h.recurrences(minCount: 3, now: T0.addingTimeInterval(1000)).map(\.key), ["runaway:Foo#1"])
-        XCTAssertTrue(h.recurrences(window: 100, now: T0.addingTimeInterval(1000)).isEmpty, "window excludes everything")
-        // Window reaching back to +250 sees only the two appHog openings.
-        XCTAssertEqual(h.recurrences(window: 750, now: T0.addingTimeInterval(1000)).map(\.key), ["appHog:Arc"])
+        XCTAssertEqual(h.recurrences(minCount: 3, now: now).map(\.key), ["runaway:Foo"])
+        XCTAssertTrue(h.recurrences(window: 100, now: now).isEmpty, "window excludes everything")
+        // Window reaching back to +1450 sees only the two appHog openings.
+        XCTAssertEqual(h.recurrences(window: 1550, now: now).map(\.key), ["appHog:Arc"])
     }
 
     // MARK: shouldNotify
@@ -200,7 +235,7 @@ final class HistoryTests: XCTestCase {
         h.reconcile([swapWarn], at: T0)
         h.reconcile([swapBad], at: T0.addingTimeInterval(60))
         h.reconcile([], at: T0.addingTimeInterval(120))
-        h.reconcile([swapWarn], at: T0.addingTimeInterval(180))
+        h.reconcile([swapWarn], at: T0.addingTimeInterval(500))
         h.snapshot(makeSample(at: T0, load1: 2.5))
         h.snapshot(makeSample(at: T0.addingTimeInterval(600), load1: 3.5))
         XCTAssertTrue(h.shouldNotify(key: "swap", at: T0))
@@ -277,7 +312,8 @@ final class HistoryTests: XCTestCase {
         XCTAssertTrue(runaway.clearedByUser)
         XCTAssertEqual(h.openIncidents.map(\.key), ["swap"])
 
-        XCTAssertEqual(h.snapshots, [Snapshot(at: T0, load1: 2.5, memPct: 50, swapPct: 10, diskFreePct: 40)])
+        // A file with no version is v0; its swap figure meant used/total and is dropped by the v2 migration.
+        XCTAssertEqual(h.snapshots, [Snapshot(at: T0, load1: 2.5, memPct: 50, swapPct: 0, swapUsed: 0, diskFreePct: 40)])
         XCTAssertFalse(h.shouldNotify(key: "swap", at: T0.addingTimeInterval(100)), "notified map decoded")
         XCTAssertTrue(h.shouldNotify(key: "swap", at: T0.addingTimeInterval(1801)))
     }
@@ -292,6 +328,6 @@ final class HistoryTests: XCTestCase {
         XCTAssertEqual(incidents[0]["openedAt"] as? Double, 721692800)
         XCTAssertEqual(incidents[0]["severity"] as? Int, 2)
         XCTAssertEqual(incidents[0]["kind"] as? String, "swap")
-        XCTAssertEqual(obj?["version"] as? Int, 1)
+        XCTAssertEqual(obj?["version"] as? Int, 2)
     }
 }
