@@ -312,8 +312,7 @@ final class HistoryTests: XCTestCase {
         XCTAssertTrue(runaway.clearedByUser)
         XCTAssertEqual(h.openIncidents.map(\.key), ["swap"])
 
-        // A file with no version is v0; its swap figure meant used/total and is dropped by the v2 migration.
-        XCTAssertEqual(h.snapshots, [Snapshot(at: T0, load1: 2.5, memPct: 50, swapPct: 0, swapUsed: 0, diskFreePct: 40)])
+        XCTAssertEqual(h.snapshots, [Snapshot(at: T0, load1: 2.5, memPct: 50, swapPct: 10, swapUsed: 0, diskFreePct: 40)])
         XCTAssertFalse(h.shouldNotify(key: "swap", at: T0.addingTimeInterval(100)), "notified map decoded")
         XCTAssertTrue(h.shouldNotify(key: "swap", at: T0.addingTimeInterval(1801)))
     }

@@ -110,32 +110,11 @@ public final class History {
         guard let data = try? Data(contentsOf: url) else { return }
         do {
             file = try JSONDecoder().decode(File.self, from: data)
-            migrate()
         } catch {
             let aside = url.deletingPathExtension().appendingPathExtension("corrupt-\(Int(Date().timeIntervalSince1970))").appendingPathExtension("json")
             try? FileManager.default.moveItem(at: url, to: aside)
             log.error("state.json failed to decode (\(error.localizedDescription)); moved to \(aside.lastPathComponent)")
         }
-    }
-
-    /// Bring an older file up to `File.currentVersion`. Each step is idempotent.
-    private func migrate() {
-        if file.version < 1 {
-            // v0 keyed orphan incidents by a lowercase family and pid list; unify with today's keys.
-            for i in file.incidents.indices where file.incidents[i].key.hasPrefix("orphan:claude") {
-                file.incidents[i].key = "orphan:Claude Code"
-            }
-            file.notified = [:]
-            file.version = 1
-            dirty = true
-        }
-        if file.version < 2 {
-            // v1 stored swap as used/total, which is meaningless (see Sample.swapPct). Drop it rather than mislead.
-            file.snapshots = file.snapshots.map { Snapshot(at: $0.at, load1: $0.load1, memPct: $0.memPct, swapPct: 0, swapUsed: 0, diskFreePct: $0.diskFreePct) }
-            file.version = 2
-            dirty = true
-        }
-        if dirty { log.notice("migrated history to v\(File.currentVersion)") }
     }
 
     public static var defaultURL: URL {

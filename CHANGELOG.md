@@ -1,5 +1,13 @@
 # Changelog
 
+## Unreleased
+
+- An app holding a lot of RAM is reported only when memory is under pressure, with advice to close tabs or windows. No Quit button for memory; quitting the app you work in is not a fix. Verified against Apple's footprint tool.
+- The advice list no longer repeats issue rows and shows at most three recurring patterns.
+- Storage: installers and Spotify's music cache are never pre-selected; caches are trashed by contents; selected rows are never hidden; selection survives rescans; sizes count hard links once.
+- Removed the old Free disk action (the Storage window replaced it), the loginwindow restart event, history migrations for pre-release formats, and the --version flag.
+- Unsigned CI builds are published as drafts only, so an ad hoc build can never become the latest release.
+
 ## 1.1.0 (2026-09-06)
 
 - Storage window. Click Storage in the panel to see what is filling the disk, graded by how safe it is to remove: safe (caches and build products, selected by default), rebuildable (node_modules, virtualenvs, simulators, installers, Docker's disk; never pre-selected), and your own large files for review. One button moves the selection to the Trash; a separate confirmed button empties it through Finder.

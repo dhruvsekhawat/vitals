@@ -1,13 +1,9 @@
 import Foundation
 
 public struct Recommendation: Identifiable, Sendable, Equatable {
-    public enum Action: Sendable, Equatable { case clear, freeDisk, restart, none }
     public let text: String
-    public let action: Action
     public let id: String
-    public init(_ text: String, _ action: Action = .none, id: String? = nil) {
-        self.text = text; self.action = action; self.id = id ?? text
-    }
+    public init(_ text: String, id: String? = nil) { self.text = text; self.id = id ?? text }
 }
 
 /// Plain-language advice derived from the current sample, its issues, and history.
@@ -20,15 +16,15 @@ public enum Advisor {
         if s.memoryPressure == .critical || s.swapPct >= t.swapBad {
             let hogs = issues.filter { $0.kind == .appHog && $0.remedy == .none }.map { $0.title.components(separatedBy: " is holding ").first ?? $0.title }
             let where_ = hogs.isEmpty ? "the biggest apps" : hogs.prefix(2).joined(separator: " and ")
-            out.append(Recommendation("macOS is paging \(Format.bytes(s.swapUsed)) to disk. Close tabs and windows in \(where_); memory comes back as you do. A restart clears the swap.", .restart, id: "rec:memory"))
+            out.append(Recommendation("macOS is paging \(Format.bytes(s.swapUsed)) to disk. Close tabs and windows in \(where_); memory comes back as you do. A restart clears the swap.", id: "rec:memory"))
         } else if s.swapPct >= t.swapWarn {
-            out.append(Recommendation("\(Format.bytes(s.swapUsed)) of swap in use, \(Int(s.swapPct))% of your RAM. A restart is the only thing that empties it.", .restart, id: "rec:swap"))
+            out.append(Recommendation("\(Format.bytes(s.swapUsed)) of swap in use, \(Int(s.swapPct))% of your RAM. A restart is the only thing that empties it.", id: "rec:swap"))
         } else if s.uptimeDays >= t.uptimeWarnDays {
-            out.append(Recommendation("\(Int(s.uptimeDays)) days since a restart. Reboot before things pile up again.", .restart, id: "rec:uptime"))
+            out.append(Recommendation("\(Int(s.uptimeDays)) days since a restart. Reboot before things pile up again.", id: "rec:uptime"))
         }
 
         if s.diskKnown && s.diskFreePct < t.diskWarnFreePct {
-            out.append(Recommendation("Disk is \(Int(100 - s.diskFreePct))% full. macOS gets slow under about 15% free.", .freeDisk, id: "rec:disk"))
+            out.append(Recommendation("Disk is \(Int(100 - s.diskFreePct))% full. macOS gets slow under about 15% free.", id: "rec:disk"))
         }
 
         if s.uptime < t.bootGrace && s.load5 > Double(s.cores) * 1.5 {

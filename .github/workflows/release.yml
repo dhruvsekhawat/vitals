@@ -94,11 +94,15 @@ jobs:
           fi
           cat build/notes.md
 
+      # An unsigned build is published as a draft only. It must never become "latest", because
+      # install.sh and the README point people at latest and Gatekeeper rejects ad hoc builds.
       - name: Create GitHub release
         uses: softprops/action-gh-release@v2
         with:
           name: Vitals ${{ github.ref_name }}
           body_path: build/notes.md
+          draft: ${{ env.HAVE_SIGNING != 'true' }}
+          make_latest: ${{ env.HAVE_SIGNING == 'true' }}
           files: |
             build/Vitals-${{ github.ref_name }}.zip
             build/Vitals-${{ github.ref_name }}.zip.sha256
