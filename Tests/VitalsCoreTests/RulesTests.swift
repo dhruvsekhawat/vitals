@@ -121,7 +121,7 @@ final class RulesTests: XCTestCase {
         XCTAssertNil(issue(makeSample(at: T0.addingTimeInterval(179), procs: [hot(95)]), kind: .runaway, rules: rules))
 
         let i = try XCTUnwrap(issue(makeSample(at: T0.addingTimeInterval(181), procs: [hot(95)]), kind: .runaway, rules: rules))
-        XCTAssertEqual(i.severity, .bad)
+        XCTAssertEqual(i.severity, .warn, "three minutes at full tilt is a warning; only a chronic pin is bad")
         XCTAssertEqual(i.remedy, .kill([4242]))
         XCTAssertEqual(i.key, "runaway:Foo#4242")
         XCTAssertEqual(i.title, "Foo is stuck")
@@ -187,7 +187,7 @@ final class RulesTests: XCTestCase {
         XCTAssertEqual(i.severity, .warn)
         XCTAssertTrue(i.title.contains("working hard"), i.title)
         XCTAssertEqual(i.key, "busy:clang#900")
-        XCTAssertEqual(i.remedy, .kill([900]))
+        XCTAssertEqual(i.remedy, .none, "a compiler doing its job gets no kill button")
     }
 
     // MARK: resetTimers

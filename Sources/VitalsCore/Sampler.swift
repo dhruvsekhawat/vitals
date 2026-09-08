@@ -107,7 +107,7 @@ public final class Sampler {
         let url = URL(fileURLWithPath: "/")
         guard let v = try? url.resourceValues(forKeys: [.volumeTotalCapacityKey, .volumeAvailableCapacityForImportantUsageKey]),
               let total = v.volumeTotalCapacity, total > 0, let free = v.volumeAvailableCapacityForImportantUsage else { return nil }
-        return (Int64(total), free)
+        return (Int64(total), max(free, 0))
     }
 
     static func thermal() -> Thermal {

@@ -11,9 +11,11 @@ public enum Remedies {
     /// Terminate politely, then forcibly. Never touches pid 0/1, this process, or another user's process.
     /// - Returns: pids that are gone afterwards.
     @discardableResult
-    public static func terminate(_ pids: [pid_t], grace: TimeInterval = 2.0) -> [pid_t] {
+    /// - Parameter sampledAt: when the pids were observed. A pid whose process started after that
+    ///   belongs to someone else now and is left alone.
+    public static func terminate(_ pids: [pid_t], sampledAt: Date? = nil, grace: TimeInterval = 2.0) -> [pid_t] {
         let me = getpid()
-        let targets = pids.filter { $0 > 1 && $0 != me && ownedByUs($0) }
+        let targets = pids.filter { $0 > 1 && $0 != me && ownedByUs($0) && !startedAfter($0, sampledAt) }
         for pid in targets { Darwin.kill(pid, SIGTERM) }
         let deadline = Date().addingTimeInterval(grace)
         while Date() < deadline, targets.contains(where: alive) { Thread.sleep(forTimeInterval: 0.1) }
@@ -28,8 +30,8 @@ public enum Remedies {
     /// an app that puts up "Save changes?" is doing its job. If it is still running after `grace`
     /// the caller reports that and the user can choose Kill explicitly.
     /// - Returns: the app's pids that are gone afterwards (empty if it declined).
-    public static func quitApp(named name: String, pids: [pid_t], grace: TimeInterval = 8.0) -> [pid_t] {
-        let mine = Set(pids)
+    public static func quitApp(named name: String, pids: [pid_t], sampledAt: Date? = nil, grace: TimeInterval = 8.0) -> [pid_t] {
+        let mine = Set(pids.filter { !startedAfter($0, sampledAt) })
         let matches = NSWorkspace.shared.runningApplications.filter { mine.contains($0.processIdentifier) }
         guard !matches.isEmpty else {
             log.notice("\(name): no running application matches its pids; nothing to quit")
@@ -51,6 +53,15 @@ public enum Remedies {
         return bsd.pbi_status != UInt32(SZOMB)
     }
 
+    /// True when the process now at `pid` began after `sampledAt`, so the pid has been reused.
+    static func startedAfter(_ pid: pid_t, _ sampledAt: Date?) -> Bool {
+        guard let sampledAt else { return false }
+        var bsd = proc_bsdinfo()
+        guard proc_pidinfo(pid, PROC_PIDTBSDINFO, 0, &bsd, Int32(MemoryLayout<proc_bsdinfo>.size)) > 0 else { return false }
+        let started = TimeInterval(bsd.pbi_start_tvsec) + TimeInterval(bsd.pbi_start_tvusec) / 1e6
+        return started > sampledAt.timeIntervalSince1970 + 1
+    }
+
     static func ownedByUs(_ pid: pid_t) -> Bool {
         var bsd = proc_bsdinfo()
         guard proc_pidinfo(pid, PROC_PIDTBSDINFO, 0, &bsd, Int32(MemoryLayout<proc_bsdinfo>.size)) > 0 else { return false }
@@ -61,15 +72,22 @@ public enum Remedies {
 
     /// Shows the system restart confirmation through System Events. Prompts for Automation
     /// permission the first time; `NSAppleEventsUsageDescription` explains why.
+    /// Asks loginwindow to show the standard "Are you sure you want to restart?" dialog
+    /// (kAEShowRestartDialog, Technical Q&A QA1134). Never restarts without that dialog.
     public static func requestRestart() -> Error? {
-        var err: NSDictionary?
-        NSAppleScript(source: "tell application \"System Events\" to restart")?.executeAndReturnError(&err)
-        if let err {
-            let msg = err[NSAppleScript.errorMessage] as? String ?? "not permitted"
-            log.error("System Events restart failed: \(msg)")
-            return NSError(domain: "Vitals", code: 2, userInfo: [NSLocalizedDescriptionKey: "Could not ask macOS to restart (\(msg)). Use the Apple menu."])
+        let target = NSAppleEventDescriptor(bundleIdentifier: "com.apple.loginwindow")
+        let event = NSAppleEventDescriptor(eventClass: AEEventClass(0x61657674 /* 'aevt' */),
+                                           eventID: AEEventID(0x72727374 /* 'rrst' */),
+                                           targetDescriptor: target,
+                                           returnID: AEReturnID(kAutoGenerateReturnID),
+                                           transactionID: AETransactionID(kAnyTransactionID))
+        do {
+            _ = try event.sendEvent(options: [.noReply], timeout: 3)
+            return nil
+        } catch {
+            log.error("restart dialog request failed: \(error.localizedDescription)")
+            return NSError(domain: "Vitals", code: 2, userInfo: [NSLocalizedDescriptionKey: "Could not ask macOS to restart. Use the Apple menu."])
         }
-        return nil
     }
 }
 

@@ -31,7 +31,7 @@ final class StorageModel: ObservableObject {
             let r = s.scan { line in Task { @MainActor in self?.status = line } }
             Task { @MainActor in
                 guard let self, self.scanner === s else { return }   // a newer scan superseded this one
-                self.report = r
+                guard let r else { self.scanning = false; self.status = ""; return }   // cancelled: keep the old report
                 // Keep the user's choices: what they ticked stays ticked, what they unticked stays unticked,
                 // and only rows that are new since last time get the safe-by-default treatment.
                 let ids = Set(r.items.map(\.id))
@@ -44,7 +44,13 @@ final class StorageModel: ObservableObject {
         }
     }
 
-    func cancel() { scanner?.cancel() }
+    /// Stop the current scan. The next `scan()` starts fresh instead of waiting on a cancelled one.
+    func cancel() {
+        scanner?.cancel()
+        scanner = nil
+        scanning = false
+        status = ""
+    }
 
     func setAll(_ grade: StorageGrade, on: Bool) {
         guard let r = report else { return }
@@ -133,7 +139,7 @@ struct StorageView: View {
             Button("Empty Trash", role: .destructive) { model.emptyTrash() }
             Button("Cancel", role: .cancel) {}
         } message: {
-            Text("This deletes everything in the Trash for good, including anything you put there yourself, and the Trash of any connected drive. \(Format.bytes(model.report?.trashBytes ?? 0)) comes back.")
+            Text("This deletes everything in the Trash for good, including anything you put there yourself, and the Trash of any connected drive. " + (model.report?.trashBytes.map { "\(Format.bytes($0)) comes back." } ?? "Size unknown."))
         }
     }
 

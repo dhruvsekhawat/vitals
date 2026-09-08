@@ -29,6 +29,11 @@ jobs:
       - name: Select newest Xcode on the runner
         run: sudo xcode-select -s "$(ls -d /Applications/Xcode*.app | sort -V | tail -1)"
 
+      - name: Check the tag matches Info.plist
+        run: |
+          v=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' Info.plist)
+          [ "v$v" = "${GITHUB_REF_NAME}" ] || { echo "tag ${GITHUB_REF_NAME} does not match CFBundleShortVersionString $v"; exit 1; }
+
       - name: Test
         run: swift test
 
@@ -66,10 +71,8 @@ jobs:
       - name: Build universal app bundle
         run: UNIVERSAL=1 ./build.sh --no-install
 
-      - name: Check the tag matches Info.plist
+      - name: Describe the build
         run: |
-          v=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' build/Vitals.app/Contents/Info.plist)
-          [ "v$v" = "${GITHUB_REF_NAME}" ] || { echo "tag ${GITHUB_REF_NAME} does not match CFBundleShortVersionString $v"; exit 1; }
           lipo -info build/Vitals.app/Contents/MacOS/Vitals
           codesign -dv --verbose=2 build/Vitals.app 2>&1 | grep -E "Authority|Signature|TeamIdentifier" || true
 

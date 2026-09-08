@@ -141,7 +141,8 @@ public final class StorageScanner {
             let p = h + "/Library/Caches/" + name
             guard !known.contains(p), !name.hasPrefix("com.apple.") else { continue }
             let lower = name.lowercased()
-            if lower == "jetbrains" { continue }   // holds Local History: unsaved edits. Not a cache in the sense that matters.
+            if lower == "jetbrains" { continue }
+            if ["cloudkit", "metadata", "geoservices", "passkit", "familycircle", "com.apple"].contains(lower) { continue }   // Apple's, undotted   // holds Local History: unsaved edits. Not a cache in the sense that matters.
             let app = Self.friendlyAppName(name)
             if lower == "ms-playwright" || lower == "cypress" {
                 out.append(Spec(path: p, label: "\(app) browsers", why: "Test browser binaries. Downloaded again, slowly.", grade: .rebuildable, contentsOnly: true))
@@ -153,7 +154,8 @@ public final class StorageScanner {
     }
 
     /// Runs synchronously; call off the main thread. `progress` receives short status lines.
-    public func scan(progress: @escaping (String) -> Void = { _ in }) -> StorageReport {
+    /// - Returns: `nil` if cancelled part way; a partial report must never be shown as a scan.
+    public func scan(progress: @escaping (String) -> Void = { _ in }) -> StorageReport? {
         var items: [StorageItem] = []
 
         progress("Caches")
@@ -178,7 +180,8 @@ public final class StorageScanner {
         items += largeFiles()
 
         progress("Checking the Trash with Finder")
-        let trash = cancelled ? nil : StorageActions.trashBytes()
+        if cancelled { return nil }
+        let trash = StorageActions.trashBytes()
 
         let disk = Self.disk()
         var paths = Set<String>()
@@ -409,6 +412,10 @@ public enum StorageActions {
             if p.hasPrefix(h + "/.Trash") { return "already in the Trash" }
             if p.hasPrefix(h + "/Library/Mobile Documents") || p.hasPrefix(h + "/Library/CloudStorage") { return "synced to the cloud; removing it here removes it everywhere" }
         }
+        // iCloud Desktop and Documents look local but are not.
+        if (try? URL(fileURLWithPath: p).resourceValues(forKeys: [.isUbiquitousItemKey]))?.isUbiquitousItem == true {
+            return "synced to iCloud; removing it here removes it everywhere"
+        }
         return nil
     }
 
@@ -472,6 +479,10 @@ public enum StorageActions {
         }
         let deadline = Date().addingTimeInterval(timeout)
         while Date() < deadline, (trashBytes() ?? 0) > 0 { Thread.sleep(forTimeInterval: 0.5) }
+        if (trashBytes() ?? 0) > 0 {
+            log.notice("Finder did not empty the Trash (cancelled or still working)")
+            return "Finder did not empty it. It may have asked you to confirm."
+        }
         log.notice("emptied Trash via Finder")
         return nil
     }
