@@ -254,14 +254,18 @@ final class RulesTests: XCTestCase {
         XCTAssertNotNil(issue(makeSample(at: T0.addingTimeInterval(187), cores: 8, procs: arc([50, 50, 50, 50, 50, 50])), kind: .appHog, rules: rules))
     }
 
-    func testAppHogOnMemoryAloneIsImmediate() throws {
+    func testAppHogOnMemoryAloneNeedsPressureAndGetsNoButton() throws {
         // 6 procs x 5.2% of 16 GB = 31% of RAM, zero CPU.
         let memTotal = 16 * GB
         let each = UInt64(Double(memTotal) * 0.31 / 6)
         let procs = arc([0, 0, 0, 0, 0, 0], rssEach: each)
-        let i = try XCTUnwrap(issue(makeSample(at: T0, cores: 8, memTotal: memTotal, procs: procs), kind: .appHog))
+        XCTAssertNil(issue(makeSample(at: T0, cores: 8, memTotal: memTotal, procs: procs), kind: .appHog), "holding RAM is fine while there is RAM to spare")
+        let i = try XCTUnwrap(issue(makeSample(at: T0, cores: 8, memTotal: memTotal, memoryPressure: .warning, procs: procs), kind: .appHog))
         XCTAssertEqual(i.severity, .warn)
-        XCTAssertTrue(i.detail.contains("of RAM"), i.detail)
+        XCTAssertEqual(i.remedy, .none, "quitting the app you work in is not the fix; closing tabs is")
+        XCTAssertTrue(i.title.hasPrefix("Arc is holding "), i.title)
+        XCTAssertTrue(i.detail.contains("% of your RAM"), i.detail)
+        XCTAssertTrue(i.detail.contains("Close tabs or windows"), i.detail)
         XCTAssertFalse(i.detail.contains("of CPU"), i.detail)
     }
 

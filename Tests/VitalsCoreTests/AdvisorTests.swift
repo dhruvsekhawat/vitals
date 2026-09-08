@@ -8,7 +8,6 @@ final class AdvisorTests: XCTestCase {
     private func recommend(_ s: Sample, issues: [Issue] = [], recurrences: [Recurrence] = [], lastIncident: Incident? = nil) -> [Recommendation] {
         let out = Advisor.recommend(sample: s, issues: issues, recurrences: recurrences, lastIncident: lastIncident, now: T0)
         for r in out { XCTAssertFalse(r.text.contains(emDash), "em dash in: \(r.text)") }
-        XCTAssertFalse(out.isEmpty, "advisor always says something")
         return out
     }
 
@@ -38,26 +37,21 @@ final class AdvisorTests: XCTestCase {
 
     // MARK: Issue-driven
 
-    func testRunawayIssueGetsClearAction() throws {
-        let out = recommend(makeSample(), issues: [runaway])
-        XCTAssertEqual(out.count, 1)
-        XCTAssertEqual(out[0].action, .clear)
-        XCTAssertTrue(out[0].text.hasPrefix("Foo is pinned at 98% CPU for 19d"), out[0].text)
-        XCTAssertTrue(out[0].text.contains("Kill it"), out[0].text)
+    func testIssueRowsAreNotRepeatedAsRecommendations() throws {
+        // The issue row already says what to do and has the button; the advice list stays for cross-cutting things.
+        for i in [runaway, appHog, orphan] {
+            let out = recommend(makeSample(), issues: [i])
+            XCTAssertTrue(out.isEmpty, "\(i.key): \(out.map(\.text))")
+        }
     }
 
-    func testAppHogIssueGetsClearAction() throws {
-        let out = recommend(makeSample(), issues: [appHog])
+    func testPagingAdviceNamesTheMemoryHogs() throws {
+        let arc = makeIssue(kind: .appHog, severity: .warn, title: "Arc is holding 14 GB", detail: "73% of your RAM across 55 processes. Close tabs or windows you are not using.", key: "appHog:Arc")
+        let out = recommend(makeSample(memoryPressure: .warning, swapUsed: 9 * GB), issues: [arc])
         XCTAssertEqual(out.count, 1)
-        XCTAssertEqual(out[0].action, .clear)
-        XCTAssertTrue(out[0].text.hasPrefix("Arc is using 40% of CPU"), out[0].text)
-    }
-
-    func testOrphanIssueGetsClearActionWithPidCount() throws {
-        let out = recommend(makeSample(), issues: [orphan])
-        XCTAssertEqual(out.count, 1)
-        XCTAssertEqual(out[0].action, .clear)
-        XCTAssertTrue(out[0].text.hasPrefix("3 helpers were left running"), out[0].text)
+        XCTAssertEqual(out[0].action, .restart)
+        XCTAssertTrue(out[0].text.contains("Close tabs and windows in Arc"), out[0].text)
+        XCTAssertFalse(out[0].text.lowercased().contains("quit"), "never tells people to quit the app they are working in")
     }
 
     // MARK: Restart
@@ -116,9 +110,8 @@ final class AdvisorTests: XCTestCase {
 
     func testHighLoadWithARunawayDoesNotBlameEveryone() throws {
         let out = recommend(makeSample(cores: 8, load5: 24, uptime: 86400), issues: [runaway])
-        XCTAssertEqual(out.count, 1)
-        XCTAssertEqual(out[0].action, .clear)
-        XCTAssertFalse(out[0].text.contains("no single culprit"))
+        XCTAssertNil(out.first { $0.text.contains("no single culprit") })
+        XCTAssertNil(out.first { $0.text.hasPrefix("Nothing to fix") }, "there is an issue on screen")
     }
 
     func testModerateLoadIsSilent() throws {
@@ -179,7 +172,7 @@ final class AdvisorTests: XCTestCase {
                            uptime: 40 * 86400, thermal: .serious, battery: battery)
         let out = recommend(s, issues: [runaway, appHog, orphan], recurrences: [r])
         XCTAssertNil(out.first { $0.text.hasPrefix("Nothing to fix") })
-        XCTAssertEqual(out.filter { $0.action == .clear }.count, 3)
+        XCTAssertEqual(out.filter { $0.action == .clear }.count, 0, "issue rows are not repeated")
         XCTAssertEqual(out.filter { $0.action == .restart }.count, 1)
         XCTAssertEqual(out.filter { $0.action == .freeDisk }.count, 1)
         XCTAssertNotNil(out.first { $0.text.contains("Plug in") })
