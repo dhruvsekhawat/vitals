@@ -226,8 +226,16 @@ public final class Rules {
             hog[a.name] = advance(hog[a.name], on: cpuShare >= t.appHogCPUShareWarn, clearlyOff: cpuShare < t.appHogCPUShareWarn - 10, now: now)
             let hogFor = hog[a.name].map { now.timeIntervalSince($0.since) } ?? 0
             let cpuHog = hogFor >= t.appHogFor && cpuShare >= t.appHogCPUShareWarn - 10
-            let memHog = memShare >= t.appHogMemShare
+            // Holding RAM is only a problem when the machine is short of it. Then the fix is closing
+            // tabs or windows, not quitting the app you are working in, so no button.
+            let memHog = memShare >= t.appHogMemShare && s.memoryPressure != .normal
             guard cpuHog || memHog else { continue }
+            if memHog && !cpuHog {
+                out.append(Issue(kind: .appHog, severity: .warn, title: "\(a.name) is holding \(Format.bytes(a.rss))",
+                                 detail: "\(Int(memShare))% of your RAM across \(a.procs) process\(a.procs == 1 ? "" : "es"). Close tabs or windows you are not using.",
+                                 remedy: .none, key: "appHog:\(a.name)"))
+                continue
+            }
 
             // Mostly compilers or encoders: it is busy, not broken. Say so, and do not offer to kill it.
             let mostlyBusy = a.cpu > 0 && a.busyCPU / a.cpu >= 0.5
