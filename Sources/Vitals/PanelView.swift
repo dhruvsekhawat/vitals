@@ -190,10 +190,10 @@ struct PanelView: View {
                 if let b = engine.busy {
                     ProgressView().controlSize(.mini)
                     Text(b).foregroundStyle(.secondary)
-                } else if !engine.notificationsAllowed {
-                    Text("Notifications are off. Enable them in System Settings.").foregroundStyle(.secondary)
                 } else if let r = engine.lastResult {
                     Text(r).foregroundStyle(.secondary).lineLimit(2)
+                } else if !engine.notificationsAllowed {
+                    Text("Notifications are off. Enable them in System Settings.").foregroundStyle(.secondary)
                 }
                 Spacer()
                 Toggle("Start at login", isOn: Binding(get: { engine.launchAtLogin }, set: { engine.setLaunchAtLogin($0) }))

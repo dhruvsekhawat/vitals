@@ -1,12 +1,19 @@
 # Changelog
 
-## Unreleased
+## 1.1.1 (2026-09-08)
 
 - An app holding a lot of RAM is reported only when memory is under pressure, with advice to close tabs or windows. No Quit button for memory; quitting the app you work in is not a fix. Verified against Apple's footprint tool.
 - The advice list no longer repeats issue rows and shows at most three recurring patterns.
 - Storage: installers and Spotify's music cache are never pre-selected; caches are trashed by contents; selected rows are never hidden; selection survives rescans; sizes count hard links once.
 - Removed the old Free disk action (the Storage window replaced it), the loginwindow restart event, history migrations for pre-release formats, and the --version flag.
 - Unsigned CI builds are published as drafts only, so an ad hoc build can never become the latest release.
+- Restart now asks through Apple's own restart dialog. It could restart without asking before.
+- Compilers and encoders working hard get no Kill button and are left out of Clear. A few minutes at full CPU is a warning; only a process that has averaged it for half an hour is marked stuck.
+- Machine-wide warnings (swap, thermal, memory, disk, uptime) notify only when they turn bad; warnings about a specific program still notify.
+- Kill and Quit refuse a pid that was reused since it was observed.
+- The login item follows the app when it is moved or upgraded in place; the installer waits for the old copy to exit and keeps launchd supervising the new one.
+- The installer no longer uses the GitHub API, so it cannot hit the rate limit; it refuses to run under sudo.
+- Storage: a cancelled scan is never shown as complete; iCloud Desktop and Documents items are refused; Emptying reports honestly when Finder did not empty.
 
 ## 1.1.0 (2026-09-06)
 

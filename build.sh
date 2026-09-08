@@ -99,6 +99,7 @@ fi
 if (( INSTALL )); then
   echo "==> install to $INSTALL_PATH"
   pkill -x Vitals 2>/dev/null || true
+  for _ in $(seq 40); do pgrep -x Vitals >/dev/null || break; sleep 0.25; done   # let the old one finish exiting
   mkdir -p "$HOME/Applications"
   rm -rf "$INSTALL_PATH"
   cp -R "$APP" "$INSTALL_PATH"

@@ -68,7 +68,9 @@ final class SamplerIntegrationTests: XCTestCase {
 
         let proc = try XCTUnwrap(second.procs.first { $0.pid == pid }, "yes (pid \(pid)) not in sample")
         XCTAssertEqual(proc.name, "yes")
-        XCTAssertGreaterThanOrEqual(proc.cpuNow, 80, "cpuNow \(proc.cpuNow): looks like ticks read as nanoseconds")
+        // The bug this guards (ticks read as nanoseconds) reports about 2%. A loaded CI runner can
+        // starve `yes` of a full core, so the floor is 40, well above the bug and below any honest run.
+        XCTAssertGreaterThanOrEqual(proc.cpuNow, 40, "cpuNow \(proc.cpuNow): looks like ticks read as nanoseconds")
         XCTAssertLessThanOrEqual(proc.cpuNow, 130, "cpuNow \(proc.cpuNow): more than one core for a single thread")
         XCTAssertGreaterThanOrEqual(proc.cpuLifetime, 50, "cpuLifetime \(proc.cpuLifetime)")
     }

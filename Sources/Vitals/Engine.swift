@@ -45,7 +45,10 @@ final class Pipeline: @unchecked Sendable {
         let recurrences = history.recurrences()
         let last = history.lastClosedIncident
         let recs = Advisor.recommend(sample: s, issues: issues, recurrences: recurrences, lastIncident: last, thresholds: rules.thresholds)
-        var notify = rec.opened.filter { $0.severity >= .warn && history.shouldNotify(key: $0.key, at: s.at) }
+        // Something about a specific program is worth a banner at warning level. Machine-wide
+        // warnings (swap, thermal, memory, disk, uptime) flap on small machines; those wait for bad.
+        let loud: Set<IssueKind> = [.runaway, .busy, .appHog, .orphan]
+        var notify = rec.opened.filter { ($0.severity == .bad || loud.contains($0.kind)) && history.shouldNotify(key: $0.key, at: s.at) }
         notify += rec.escalated.filter { history.shouldNotify(key: $0.key, at: s.at, escalation: true) }
         let view = ViewState(sample: s, issues: issues, topApps: AppUsage.top(s.procs, cores: s.cores),
                              recommendations: recs, recurrences: recurrences, trend24h: history.trend(hours: 24), lastIncident: last)
@@ -55,17 +58,17 @@ final class Pipeline: @unchecked Sendable {
     struct Applied { var gone = 0; var refused: [String] = [] }
 
     /// Apply each issue's remedy. A graceful quit that is declined is reported, not escalated.
-    func apply(_ issues: [Issue]) -> Applied {
+    func apply(_ issues: [Issue], sampledAt: Date?) -> Applied {
         dispatchPrecondition(condition: .onQueue(queue))
         var result = Applied()
         var cleared: [String] = []
         for i in issues {
             switch i.remedy {
             case .kill(let pids):
-                result.gone += Remedies.terminate(pids).count
+                result.gone += Remedies.terminate(pids, sampledAt: sampledAt).count
                 cleared.append(i.key)
             case .quitApp(let name, let pids):
-                let gone = Remedies.quitApp(named: name, pids: pids)
+                let gone = Remedies.quitApp(named: name, pids: pids, sampledAt: sampledAt)
                 result.gone += gone.count
                 if gone.isEmpty { result.refused.append(name) } else { cleared.append(i.key) }
             case .none: break
@@ -118,7 +121,9 @@ final class Engine: ObservableObject {
         guard !headless else { return }
 
         launchAtLogin = LoginItem.isEnabled
+        let exe = Bundle.main.executablePath ?? CommandLine.arguments[0]
         if !launchAtLogin && !UserDefaults.standard.bool(forKey: "loginItemDeclined") { setLaunchAtLogin(true) }
+        else if launchAtLogin, LoginItem.programPath != exe { setLaunchAtLogin(true) }   // app moved or upgraded
         notifier?.requestAuthorization { [weak self] ok in self?.notificationsAllowed = ok }
         reschedule()
 
@@ -166,7 +171,10 @@ final class Engine: ObservableObject {
     private func publish(_ r: Pipeline.Result) {
         let wasOnBattery = state.sample?.battery?.onBattery
         var view = r.view
-        // An app that refused to quit gets an explicit Kill instead of another polite request.
+        // An app that refused to quit gets an explicit Kill instead of another polite request,
+        // until its issue goes away.
+        let stillHogging = Set(r.view.issues.compactMap { i -> String? in if case .quitApp(let n, _) = i.remedy { return n }; return nil })
+        quitRefused.formIntersection(stillHogging)
         if !quitRefused.isEmpty {
             view.issues = view.issues.map { i in
                 if case .quitApp(let name, let pids) = i.remedy, quitRefused.contains(name) {
@@ -188,10 +196,11 @@ final class Engine: ObservableObject {
     func clear(key: String? = nil) {
         let targets = state.issues.filter { $0.remedy.isActionable && (key == nil || $0.key == key) }
         guard !targets.isEmpty, busy == nil else { return }
+        let sampledAt = state.sample?.at
         busy = targets.count == 1 ? "\(targets[0].remedy.verb == "Kill" ? "Stopping" : "Quitting") \(targets[0].title)" : "Clearing \(targets.count) issues"
         let p = pipeline
         p.queue.async { [weak self] in
-            let applied = p.apply(targets)
+            let applied = p.apply(targets, sampledAt: sampledAt)
             Thread.sleep(forTimeInterval: 0.5)
             let r = p.run()
             Task { @MainActor in

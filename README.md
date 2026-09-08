@@ -59,7 +59,7 @@ None of that is hard to find if you know which four commands to run. Vitals runs
   <tr>
     <td valign="top">
       <h4>One click</h4>
-      Kill a stuck process. Quit an app politely so it saves its state. Clear every leaked helper at once. Free disk. Restart. Each is one button, and each says what it will do.
+      Kill a stuck process. Quit an app politely so it saves its state. Clear every leaked helper at once. Restart. Each is one button, and each says what it will do.
     </td>
     <td valign="top">
       <h4>It comes to you</h4>
@@ -83,7 +83,7 @@ None of that is hard to find if you know which four commands to run. Vitals runs
 | Helper processes whose parent session is gone | **leaked** | offers Clear for all of them at once |
 | Memory pressure, from the same kernel signal Activity Monitor uses | **high / critical** | names the biggest app |
 | Swap growing relative to RAM | **growing / heavy** | tells you only a restart empties it |
-| Disk under 15% free | **low** | offers Free disk, which purges caches that rebuild themselves |
+| Disk under 15% free | **low** | points you at the Storage window |
 | Weeks without a restart | **worth a reboot** | offers Restart with the normal macOS confirmation |
 | Thermal pressure | **getting warm / hot** | names the app most responsible |
 
@@ -170,7 +170,7 @@ cd vitals
 ./build.sh
 ```
 
-That builds a release binary, assembles `Vitals.app`, signs it, installs it to `~/Applications`, registers the LaunchAgent, and launches it. `./build.sh --test` runs the 111 tests first. `UNIVERSAL=1 ./build.sh` builds for both architectures. `CODESIGN_IDENTITY` and `NOTARY_PROFILE` make it a notarized build; see [CONTRIBUTING.md](CONTRIBUTING.md).
+That builds a release binary, assembles `Vitals.app`, signs it, installs it to `~/Applications`, registers the LaunchAgent, and launches it. `./build.sh --test` runs the tests first. `UNIVERSAL=1 ./build.sh` builds for both architectures. `CODESIGN_IDENTITY` and `NOTARY_PROFILE` make it a notarized build; see [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## Privacy
 

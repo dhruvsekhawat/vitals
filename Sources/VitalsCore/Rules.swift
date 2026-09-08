@@ -168,8 +168,9 @@ public final class Rules {
     }
 
     private func culpritSuffix(_ s: Sample) -> String {
-        guard let top = AppUsage.top(s.procs, cores: s.cores, limit: 1).first, top.cpu / Double(s.cores) >= 15 else { return "" }
-        return ", mostly \(top.name) at \(Int(top.cpu / Double(s.cores)))% of CPU"
+        let cores = Double(max(s.cores, 1))
+        guard let top = AppUsage.top(s.procs, cores: s.cores, limit: 1).first, top.cpu / cores >= 15 else { return "" }
+        return ", mostly \(top.name) at \(Int(top.cpu / cores))% of CPU"
     }
 
     /// Advance a clock: start it when `on`, reset it after `coolSamples` samples that are clearly off.
@@ -198,12 +199,14 @@ public final class Rules {
             let busy = Self.isKnownBusy(p.name)
             if busy && s.uptime < t.bootGrace { continue }   // Spotlight, Photos and friends rebuild after boot
             let since = chronic ? age : hotDuration
+            // A few minutes at full tilt is a warning; a process that has averaged it for half an hour
+            // is stuck. Known-busy programs never get a kill button; they are doing their job.
             out.append(Issue(
                 kind: busy ? .busy : .runaway,
-                severity: busy ? .warn : .bad,
+                severity: (busy || !chronic) ? .warn : .bad,
                 title: busy ? "\(p.displayName) is working hard" : "\(p.displayName) is stuck",
                 detail: "\(Int(p.cpuNow))% CPU for \(Format.duration(since))" + (busy ? ". Normal for a build or export" : ""),
-                remedy: .kill([p.pid]),
+                remedy: busy ? .none : .kill([p.pid]),
                 key: "\(busy ? "busy" : "runaway"):\(p.name)#\(p.pid)"
             ))
         }

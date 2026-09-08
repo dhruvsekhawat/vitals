@@ -4,9 +4,9 @@
 #   curl -fsSL https://raw.githubusercontent.com/dhruvsekhawat/vitals/main/install.sh | sh
 #
 # What this does, in order: download the release zip and its checksum, verify the checksum,
-# unpack Vitals.app into ~/Applications, clear the quarantine flag (you chose to install it;
-# the app is ad-hoc signed, not notarized, so macOS would otherwise refuse to open it),
-# and launch it. Vitals registers itself to start at login on first launch.
+# unpack Vitals.app into ~/Applications, and launch it. Releases are signed and notarized;
+# the quarantine flag is cleared anyway so a build you made yourself installs the same way.
+# Vitals registers itself to start at login on first launch.
 #
 #   sh install.sh --uninstall    removes the app, the login item, and its saved state
 set -eu
@@ -26,21 +26,23 @@ if [ "${1:-}" = "--uninstall" ]; then
   rm -f "$PLIST"
   rm -rf "$APP"
   rm -rf "$HOME/Library/Application Support/Vitals"
+  defaults delete "$LABEL" >/dev/null 2>&1 || true
   say "Vitals removed."
   exit 0
 fi
 
 [ "$(uname -s)" = "Darwin" ] || die "Vitals is a macOS app."
+[ "$(id -u)" -ne 0 ] || die "run this as yourself, not with sudo. Vitals installs into your own home folder."
 major=$(sw_vers -productVersion | cut -d. -f1)
 [ "$major" -ge 14 ] || die "Vitals needs macOS 14 or later (you have $(sw_vers -productVersion))."
 command -v curl >/dev/null || die "curl is required."
 
 say "Finding the latest release of $REPO"
-api=$(curl -fsSL "https://api.github.com/repos/$REPO/releases/latest") || die "could not reach GitHub."
-tag=$(printf '%s' "$api" | sed -n 's/.*"tag_name": *"\([^"]*\)".*/\1/p' | head -1)
-zip_url=$(printf '%s' "$api" | sed -n 's/.*"browser_download_url": *"\([^"]*Vitals-[^"]*\.zip\)".*/\1/p' | head -1)
-sum_url=$(printf '%s' "$api" | sed -n 's/.*"browser_download_url": *"\([^"]*\.sha256\)".*/\1/p' | head -1)
-[ -n "$tag" ] && [ -n "$zip_url" ] && [ -n "$sum_url" ] || die "no release with a Vitals zip was found."
+# The releases/latest redirect needs no API token and has no rate limit.
+tag=$(curl -fsSLI -o /dev/null -w '%{url_effective}' "https://github.com/$REPO/releases/latest" | sed 's#.*/tag/##') || die "could not reach GitHub."
+case "$tag" in v[0-9]*) ;; *) die "could not find the latest release tag (got '$tag').";; esac
+zip_url="https://github.com/$REPO/releases/download/$tag/Vitals-$tag.zip"
+sum_url="$zip_url.sha256"
 
 tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT
@@ -59,12 +61,19 @@ ditto -x -k "$tmp/Vitals.zip" "$tmp/unpacked"
 [ -d "$tmp/unpacked/Vitals.app" ] || die "the zip did not contain Vitals.app."
 launchctl bootout "gui/$(id -u)/$LABEL" 2>/dev/null || true
 pkill -x Vitals 2>/dev/null || true
+i=0; while pgrep -x Vitals >/dev/null && [ $i -lt 40 ]; do sleep 0.25; i=$((i+1)); done   # let the old one finish exiting
 rm -rf "$APP"
 ditto "$tmp/unpacked/Vitals.app" "$APP"
 xattr -dr com.apple.quarantine "$APP" 2>/dev/null || true
 codesign --verify --deep --strict "$APP" 2>/dev/null || die "the downloaded app failed signature verification. Not launching."
 
-open "$APP"
+if [ -f "$PLIST" ]; then
+  # Keep launchd supervising it, so a crash relaunches it and it starts at login.
+  launchctl bootstrap "gui/$(id -u)" "$PLIST" 2>/dev/null || true
+  launchctl kickstart -k "gui/$(id -u)/$LABEL" 2>/dev/null || open "$APP"
+else
+  open "$APP"
+fi
 say ""
 say "Vitals $tag is running. Look for the dot in your menu bar."
 say "macOS will ask once whether Vitals may send notifications. Say yes, or the alerts are silent."

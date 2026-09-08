@@ -15,6 +15,13 @@ public enum LoginItem {
 
     public static var isEnabled: Bool { FileManager.default.fileExists(atPath: plistPath) }
 
+    /// The executable the agent currently points at, if any.
+    public static var programPath: String? {
+        guard let data = FileManager.default.contents(atPath: plistPath),
+              let plist = try? PropertyListSerialization.propertyList(from: data, format: nil) as? [String: Any] else { return nil }
+        return (plist["ProgramArguments"] as? [String])?.first
+    }
+
     /// True when this process was started by launchd as the agent. Booting the job out from
     /// inside it would kill us mid-operation.
     public static var isCurrentProcessTheAgent: Bool {
@@ -39,7 +46,8 @@ public enum LoginItem {
             if !isCurrentProcessTheAgent {
                 let r = Shell.run(["launchctl", "bootstrap", "gui/\(getuid())", plistPath], timeout: 10)
                 // "already bootstrapped" (EEXIST, status 37) is fine; anything else is not.
-                if !r.ok && r.status != 37 && !r.output.contains("already") {
+                // Already loaded shows up as EEXIST (37) on older systems and EIO (5) on recent ones.
+                if !r.ok && r.status != 37 && r.status != 5 && !r.output.contains("already") {
                     try? fm.removeItem(atPath: plistPath)
                     throw NSError(domain: "Vitals", code: 3, userInfo: [NSLocalizedDescriptionKey: "launchctl bootstrap failed: \(r.output.trimmingCharacters(in: .whitespacesAndNewlines))"])
                 }
