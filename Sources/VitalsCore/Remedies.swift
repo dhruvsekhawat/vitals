@@ -57,101 +57,11 @@ public enum Remedies {
         return bsd.pbi_uid == getuid()
     }
 
-    // MARK: - Disk
-
-    /// A cache that rebuilds itself. Nothing here holds user data. The directory's contents are
-    /// removed, not the directory, so a symlinked cache keeps its link.
-    public struct PurgeTarget: Sendable {
-        public let label: String
-        public let path: String          // absolute, or "~/…"
-        public init(_ label: String, _ path: String) { self.label = label; self.path = path }
-        var resolved: String { (path as NSString).expandingTildeInPath }
-    }
-
-    public static let defaultPurgeTargets: [PurgeTarget] = [
-        PurgeTarget("Xcode DerivedData", "~/Library/Developer/Xcode/DerivedData"),
-        PurgeTarget("Homebrew cache", "~/Library/Caches/Homebrew"),
-        PurgeTarget("npm cache", "~/.npm/_cacache"),
-        PurgeTarget("uv cache", "~/.cache/uv"),
-        PurgeTarget("node-gyp cache", "~/Library/Caches/node-gyp"),
-        PurgeTarget("Arc cache", "~/Library/Caches/Arc"),
-        PurgeTarget("Arc browser cache", "~/Library/Caches/company.thebrowser.Browser"),
-        PurgeTarget("Spotify cache", "~/Library/Caches/com.spotify.client"),
-        PurgeTarget("Claude updater cache", "~/Library/Caches/com.anthropic.claudefordesktop.ShipIt"),
-    ]
-
-    /// Commands whose job is to prune their own store. Only run if the tool is installed.
-    public static let defaultPurgeCommands: [(label: String, argv: [String])] = [
-        ("pnpm store prune", ["pnpm", "store", "prune"]),
-        ("brew cleanup", ["brew", "cleanup", "-s", "--prune=all"]),
-    ]
-
-    public struct PurgeReport: Sendable {
-        public var freedBytes: Int64 = 0
-        public var removed: [String] = []
-        public var failed: [String] = []
-        public var summary: String {
-            if removed.isEmpty && failed.isEmpty { return "Nothing to free" }
-            var s = "Freed \(Format.bytes(UInt64(max(freedBytes, 0))))"
-            if !removed.isEmpty { s += " (\(removed.joined(separator: ", ")))" }
-            if !failed.isEmpty { s += ". Skipped: \(failed.joined(separator: ", "))" }
-            return s
-        }
-    }
-
-    public static func purgeCaches(targets: [PurgeTarget] = defaultPurgeTargets,
-                                   commands: [(label: String, argv: [String])] = defaultPurgeCommands,
-                                   progress: @escaping (String) -> Void) -> PurgeReport {
-        var report = PurgeReport()
-        let before = freeBytes()
-        let fm = FileManager.default
-        for t in targets {
-            var isDir: ObjCBool = false
-            guard fm.fileExists(atPath: t.resolved, isDirectory: &isDir) else { continue }
-            progress("Clearing \(t.label)")
-            do {
-                if isDir.boolValue {
-                    for child in try fm.contentsOfDirectory(atPath: t.resolved) { try fm.removeItem(atPath: t.resolved + "/" + child) }
-                } else {
-                    try fm.removeItem(atPath: t.resolved)
-                }
-                report.removed.append(t.label)
-            } catch {
-                report.failed.append(t.label)
-                log.error("purge \(t.label): \(error.localizedDescription)")
-            }
-        }
-        for c in commands where Shell.which(c.argv[0]) != nil {
-            progress("Running \(c.label)")
-            if Shell.run(c.argv, timeout: 300).ok { report.removed.append(c.label) } else { report.failed.append(c.label) }
-        }
-        report.freedBytes = max(freeBytes() - before, 0)   // another writer can shrink free space mid-purge
-        log.notice("purge: \(report.summary)")
-        return report
-    }
-
-    public static func freeBytes() -> Int64 {
-        (try? URL(fileURLWithPath: "/").resourceValues(forKeys: [.volumeAvailableCapacityForImportantUsageKey]).volumeAvailableCapacityForImportantUsage) ?? 0
-    }
-
     // MARK: - Restart
 
-    /// Shows the system restart confirmation. Uses the documented Apple Event to loginwindow
-    /// (Technical Q&A QA1134); falls back to System Events scripting. Either path can prompt
-    /// for Automation permission the first time; `NSAppleEventsUsageDescription` explains why.
+    /// Shows the system restart confirmation through System Events. Prompts for Automation
+    /// permission the first time; `NSAppleEventsUsageDescription` explains why.
     public static func requestRestart() -> Error? {
-        let target = NSAppleEventDescriptor(bundleIdentifier: "com.apple.loginwindow")
-        let event = NSAppleEventDescriptor(eventClass: AEEventClass(0x61657674 /* 'aevt' */),
-                                           eventID: AEEventID(0x72657374 /* 'rest' kAERestart */),
-                                           targetDescriptor: target,
-                                           returnID: AEReturnID(kAutoGenerateReturnID),
-                                           transactionID: AETransactionID(kAnyTransactionID))
-        do {
-            _ = try event.sendEvent(options: [.noReply, .neverInteract], timeout: 3)
-            return nil
-        } catch {
-            log.error("loginwindow restart event failed: \(error.localizedDescription)")
-        }
         var err: NSDictionary?
         NSAppleScript(source: "tell application \"System Events\" to restart")?.executeAndReturnError(&err)
         if let err {
@@ -171,7 +81,6 @@ public enum Shell {
     static let searchPath = ["/opt/homebrew/bin", "/usr/local/bin", "/usr/bin", "/bin"]
 
     public static func which(_ tool: String) -> String? {
-        if tool.hasPrefix("/") { return FileManager.default.isExecutableFile(atPath: tool) ? tool : nil }
         for dir in searchPath {
             let p = dir + "/" + tool
             if FileManager.default.isExecutableFile(atPath: p) { return p }

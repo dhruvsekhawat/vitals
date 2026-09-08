@@ -17,7 +17,6 @@ let package = Package(
             dependencies: ["VitalsCore"],
             path: "Sources/Vitals",
             linkerSettings: [
-                .linkedFramework("ServiceManagement"),
                 .linkedFramework("UserNotifications"),
             ]
         ),

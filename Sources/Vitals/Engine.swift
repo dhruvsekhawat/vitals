@@ -146,11 +146,7 @@ final class Engine: ObservableObject {
         timer?.cancel()
         let t = DispatchSource.makeTimerSource(queue: pipeline.queue)
         t.schedule(deadline: .now() + interval, repeating: interval, leeway: .milliseconds(500))
-        let p = pipeline
-        t.setEventHandler { [weak self] in
-            let r = p.run()
-            Task { @MainActor in self?.publish(r) }
-        }
+        t.setEventHandler { [weak self] in self?.runAndPublish() }
         t.resume()
         timer = t
     }
@@ -158,10 +154,13 @@ final class Engine: ObservableObject {
     /// Sample now, off the main thread, and publish when done.
     func tick() {
         let p = pipeline
-        p.queue.async { [weak self] in
-            let r = p.run()
-            Task { @MainActor in self?.publish(r) }
-        }
+        p.queue.async { [weak self] in self?.runAndPublish() }
+    }
+
+    /// Must run on the pipeline queue.
+    private nonisolated func runAndPublish() {
+        let r = pipeline.run()
+        Task { @MainActor in self.publish(r) }
     }
 
     private func publish(_ r: Pipeline.Result) {
@@ -205,21 +204,6 @@ final class Engine: ObservableObject {
                     self.lastResult = applied.gone == 1 ? "Stopped 1 process" : "Stopped \(applied.gone) processes"
                 }
                 self.publish(r)
-            }
-        }
-    }
-
-    func freeDisk() {
-        guard busy == nil else { return }
-        busy = "Freeing disk"
-        let p = pipeline
-        p.queue.async { [weak self] in
-            let report = Remedies.purgeCaches { msg in Task { @MainActor in self?.busy = msg } }
-            let r = p.run()
-            Task { @MainActor in
-                self?.busy = nil
-                self?.lastResult = report.summary
-                self?.publish(r)
             }
         }
     }

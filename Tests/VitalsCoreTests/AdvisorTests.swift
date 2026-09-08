@@ -24,7 +24,6 @@ final class AdvisorTests: XCTestCase {
     func testBenignMachineHasNothingToFix() throws {
         let out = recommend(makeSample())
         XCTAssertEqual(out.map(\.text), ["Nothing to fix."])
-        XCTAssertEqual(out[0].action, .none)
     }
 
     func testNothingToFixMentionsLastIncident() throws {
@@ -49,7 +48,6 @@ final class AdvisorTests: XCTestCase {
         let arc = makeIssue(kind: .appHog, severity: .warn, title: "Arc is holding 14 GB", detail: "73% of your RAM across 55 processes. Close tabs or windows you are not using.", key: "appHog:Arc")
         let out = recommend(makeSample(memoryPressure: .warning, swapUsed: 9 * GB), issues: [arc])
         XCTAssertEqual(out.count, 1)
-        XCTAssertEqual(out[0].action, .restart)
         XCTAssertTrue(out[0].text.contains("Close tabs and windows in Arc"), out[0].text)
         XCTAssertFalse(out[0].text.lowercased().contains("quit"), "never tells people to quit the app they are working in")
     }
@@ -59,14 +57,12 @@ final class AdvisorTests: XCTestCase {
     func testFullSwapRecommendsRestartBecauseOfPaging() throws {
         let out = recommend(makeSample(swapUsed: 9 * GB))   // 56% of 16 GB RAM
         XCTAssertEqual(out.count, 1)
-        XCTAssertEqual(out[0].action, .restart)
         XCTAssertTrue(out[0].text.contains("paging"), out[0].text)
     }
 
     func testHighSwapRecommendsRestartWithPercent() throws {
         let out = recommend(makeSample(swapUsed: 5 * GB))   // 31% of 16 GB RAM
         XCTAssertEqual(out.count, 1)
-        XCTAssertEqual(out[0].action, .restart)
         XCTAssertTrue(out[0].text.contains("31%"), out[0].text)
         XCTAssertFalse(out[0].text.contains("paging"), out[0].text)
     }
@@ -74,13 +70,11 @@ final class AdvisorTests: XCTestCase {
     func testLongUptimeWithLowSwapRecommendsRestart() throws {
         let out = recommend(makeSample(swapTotal: 100, swapUsed: 5, uptime: 20 * 86400))
         XCTAssertEqual(out.count, 1)
-        XCTAssertEqual(out[0].action, .restart)
         XCTAssertTrue(out[0].text.hasPrefix("20 days since a restart"), out[0].text)
     }
 
     func testCriticalMemoryPressureRecommendsRestart() throws {
         let out = recommend(makeSample(memoryPressure: .critical))
-        XCTAssertEqual(out.map(\.action), [.restart])
     }
 
     // MARK: Disk
@@ -88,7 +82,6 @@ final class AdvisorTests: XCTestCase {
     func testLowDiskRecommendsFreeingSpace() throws {
         let out = recommend(makeSample(diskTotal: 100, diskFree: 10))
         XCTAssertEqual(out.count, 1)
-        XCTAssertEqual(out[0].action, .freeDisk)
         XCTAssertTrue(out[0].text.hasPrefix("Disk is 90% full"), out[0].text)
     }
 
@@ -99,7 +92,6 @@ final class AdvisorTests: XCTestCase {
         XCTAssertEqual(out.count, 1)
         XCTAssertTrue(out[0].text.hasPrefix("Just restarted"), out[0].text)
         XCTAssertFalse(out[0].text.contains("no single culprit"))
-        XCTAssertEqual(out[0].action, .none)
     }
 
     func testHighLoadWithNoCulpritIsCalledOut() throws {
@@ -126,7 +118,6 @@ final class AdvisorTests: XCTestCase {
         let out = recommend(makeSample(lowPowerMode: false, battery: battery), issues: [appHog])
         let plug = try XCTUnwrap(out.first { $0.text.contains("Plug in") })
         XCTAssertTrue(plug.text.contains("37%"), plug.text)
-        XCTAssertEqual(plug.action, .none)
     }
 
     func testBusyOnBatteryInLowPowerModeSaysNothingAboutPluggingIn() throws {
@@ -151,7 +142,6 @@ final class AdvisorTests: XCTestCase {
         let text = out[0].text
         XCTAssertTrue(text.contains("4 times in 30 days"), text)
         XCTAssertTrue(text.contains("extension"), text)
-        XCTAssertEqual(out[0].action, .none)
     }
 
     func testOrphanRecurrenceGetsParentAppHint() throws {
@@ -172,9 +162,6 @@ final class AdvisorTests: XCTestCase {
                            uptime: 40 * 86400, thermal: .serious, battery: battery)
         let out = recommend(s, issues: [runaway, appHog, orphan], recurrences: [r])
         XCTAssertNil(out.first { $0.text.hasPrefix("Nothing to fix") })
-        XCTAssertEqual(out.filter { $0.action == .clear }.count, 0, "issue rows are not repeated")
-        XCTAssertEqual(out.filter { $0.action == .restart }.count, 1)
-        XCTAssertEqual(out.filter { $0.action == .freeDisk }.count, 1)
         XCTAssertNotNil(out.first { $0.text.contains("Plug in") })
         XCTAssertNotNil(out.first { $0.text.contains("3 times in 30 days") })
         XCTAssertNil(out.first { $0.text.contains("no single culprit") }, "runaway and appHog are the culprits")

@@ -1,5 +1,4 @@
 import Foundation
-import ServiceManagement
 import os
 
 /// Start-at-login via a user LaunchAgent.
@@ -22,14 +21,8 @@ public enum LoginItem {
         ProcessInfo.processInfo.environment["XPC_SERVICE_NAME"] == label
     }
 
-    public struct Failure: Error, LocalizedError {
-        public let message: String
-        public var errorDescription: String? { message }
-    }
-
     /// Enable or disable. Safe to call from the agent itself. Blocking: runs `launchctl`.
     public static func set(_ on: Bool, executable: String) throws {
-        try? SMAppService.mainApp.unregister()   // never let two mechanisms launch it
         let fm = FileManager.default
         if on {
             let plist: [String: Any] = [
@@ -48,7 +41,7 @@ public enum LoginItem {
                 // "already bootstrapped" (EEXIST, status 37) is fine; anything else is not.
                 if !r.ok && r.status != 37 && !r.output.contains("already") {
                     try? fm.removeItem(atPath: plistPath)
-                    throw Failure(message: "launchctl bootstrap failed: \(r.output.trimmingCharacters(in: .whitespacesAndNewlines))")
+                    throw NSError(domain: "Vitals", code: 3, userInfo: [NSLocalizedDescriptionKey: "launchctl bootstrap failed: \(r.output.trimmingCharacters(in: .whitespacesAndNewlines))"])
                 }
             }
             log.notice("login item enabled")

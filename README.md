@@ -78,7 +78,8 @@ None of that is hard to find if you know which four commands to run. Vitals runs
 | --- | --- | --- |
 | A process pinned at high CPU for minutes | **is stuck** | offers Kill. SIGTERM first, SIGKILL only if ignored |
 | A compiler or encoder pinned at high CPU | **is working hard** | tells you it is normal. No kill button |
-| An app holding a big share of CPU for two minutes, or a big share of RAM | **is taking over** | offers Quit, the polite kind. Never force-kills on its own |
+| An app holding a big share of CPU for two minutes | **is taking over** | offers Quit, the polite kind. Never force-kills on its own |
+| An app holding a big share of RAM while memory is under pressure | **is holding N GB** | says which app and tells you to close tabs or windows. No Quit: quitting the app you work in is not a fix |
 | Helper processes whose parent session is gone | **leaked** | offers Clear for all of them at once |
 | Memory pressure, from the same kernel signal Activity Monitor uses | **high / critical** | names the biggest app |
 | Swap growing relative to RAM | **growing / heavy** | tells you only a restart empties it |

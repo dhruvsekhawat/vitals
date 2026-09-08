@@ -7,10 +7,6 @@ struct VitalsApp: App {
 
     init() {
         let args = CommandLine.arguments
-        if args.contains("--version") {
-            print("Vitals \(Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "dev")")
-            exit(0)
-        }
         if let i = args.firstIndex(of: "--snapshot"), i + 1 < args.count {
             Self.snapshot(to: args[i + 1])   // never returns
         }

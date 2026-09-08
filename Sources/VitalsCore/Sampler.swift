@@ -17,14 +17,7 @@ public final class Sampler {
     private var cpuPrev: [pid_t: CPU] = [:]
     private let selfPid = getpid()
     private let uid = getuid()
-    private let wantsArgs: (_ ppid: pid_t, _ path: String) -> Bool
-
-    /// Command lines can carry secrets. They are read only for processes the caller says it
-    /// needs them for. The default is processes reparented to launchd, which is what the
-    /// orphan rules look at.
-    public init(readArgsFor wantsArgs: @escaping (_ ppid: pid_t, _ path: String) -> Bool = { ppid, _ in ppid == 1 }) {
-        self.wantsArgs = wantsArgs
-    }
+    public init() {}
 
     /// Forget CPU baselines. Call after sleep so the first post-wake delta is not skewed.
     public func resetDeltas() { cpuPrev.removeAll() }
@@ -198,7 +191,9 @@ public final class Sampler {
         if let m = meta[pid], abs(m.started.timeIntervalSince(started)) < 1 { return m }
         var buf = [CChar](repeating: 0, count: 4 * Int(MAXPATHLEN))   // PROC_PIDPATHINFO_MAXSIZE
         let path = proc_pidpath(pid, &buf, UInt32(buf.count)) > 0 ? String(cString: buf) : "pid \(pid)"
-        let m = Meta(path: path, args: wantsArgs(ppid, path) ? Self.args(for: pid) : "", started: started)
+        // Command lines can carry secrets. Read them only for processes reparented to launchd,
+        // which is all the orphan rules look at.
+        let m = Meta(path: path, args: ppid == 1 ? Self.args(for: pid) : "", started: started)
         meta[pid] = m
         return m
     }

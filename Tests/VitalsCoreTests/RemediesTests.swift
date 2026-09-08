@@ -100,81 +100,13 @@ final class RemediesTests: XCTestCase {
         XCTAssertGreaterThanOrEqual(elapsed, 1)
     }
 
-    // MARK: purgeCaches
 
-    func testPurgeCachesRemovesExistingTargetsAndSkipsMissingOnes() throws {
-        let cache = tmp.appendingPathComponent("SomeCache", isDirectory: true)
-        try FileManager.default.createDirectory(at: cache, withIntermediateDirectories: true)
-        try Data(repeating: 0xAB, count: 1_048_576).write(to: cache.appendingPathComponent("blob.bin"))
-        let missing = tmp.appendingPathComponent("does-not-exist").path
 
-        var progress: [String] = []
-        let report = Remedies.purgeCaches(
-            targets: [Remedies.PurgeTarget("Test cache", cache.path), Remedies.PurgeTarget("Ghost cache", missing)],
-            commands: [],
-            progress: { progress.append($0) })
 
-        XCTAssertTrue(FileManager.default.fileExists(atPath: cache.path), "the directory stays (a symlinked cache keeps its link)")
-        XCTAssertEqual(try FileManager.default.contentsOfDirectory(atPath: cache.path), [], "but its contents are gone")
-        XCTAssertEqual(report.removed, ["Test cache"])
-        XCTAssertTrue(report.failed.isEmpty, "\(report.failed)")
-        XCTAssertGreaterThanOrEqual(report.freedBytes, 0)
-        XCTAssertEqual(progress, ["Clearing Test cache"])
-        XCTAssertTrue(report.summary.hasPrefix("Freed "), report.summary)
-        XCTAssertTrue(report.summary.hasSuffix("(Test cache)"), report.summary)
-    }
-
-    func testPurgeCachesExpandsTilde() throws {
-        // A target written as "~/..." resolves against HOME. Use a unique dir under HOME's temp-safe area.
-        let home = NSHomeDirectory()
-        let rel = ".vitals-test-\(UUID().uuidString)"
-        let abs = home + "/" + rel
-        try FileManager.default.createDirectory(atPath: abs, withIntermediateDirectories: true)
-        defer { try? FileManager.default.removeItem(atPath: abs) }
-
-        let report = Remedies.purgeCaches(targets: [Remedies.PurgeTarget("Tilde cache", "~/" + rel)], commands: [], progress: { _ in })
-        XCTAssertEqual(report.removed, ["Tilde cache"])
-        XCTAssertTrue(FileManager.default.fileExists(atPath: abs), "emptied, not removed")
-    }
-
-    func testPurgeCachesRunsCommandsOnlyWhenInstalled() {
-        var progress: [String] = []
-        let report = Remedies.purgeCaches(
-            targets: [],
-            commands: [("say true", ["true"]), ("say false", ["false"]), ("ghost", ["definitely-not-a-tool-xyz"])],
-            progress: { progress.append($0) })
-        XCTAssertEqual(report.removed, ["say true"])
-        XCTAssertEqual(report.failed, ["say false"])
-        XCTAssertEqual(progress, ["Running say true", "Running say false"])
-    }
 
     // MARK: PurgeReport.summary
 
-    func testSummaryWhenNothingHappened() {
-        XCTAssertEqual(Remedies.PurgeReport().summary, "Nothing to free")
-        var r = Remedies.PurgeReport()
-        r.freedBytes = 5 * Int64(GB)
-        XCTAssertEqual(r.summary, "Nothing to free", "bytes alone do not count without a removed or failed label")
-    }
 
-    func testSummaryWithRemovedOnly() {
-        var r = Remedies.PurgeReport()
-        r.freedBytes = 2 * Int64(GB)
-        r.removed = ["A", "B"]
-        XCTAssertEqual(r.summary, "Freed 2.0 GB (A, B)")
-    }
 
-    func testSummaryWithFailedOnly() {
-        var r = Remedies.PurgeReport()
-        r.failed = ["C"]
-        XCTAssertEqual(r.summary, "Freed 0 MB. Skipped: C")
-    }
 
-    func testSummaryWithBothAndNegativeBytesClampedToZero() {
-        var r = Remedies.PurgeReport()
-        r.freedBytes = -123_456
-        r.removed = ["A"]
-        r.failed = ["C", "D"]
-        XCTAssertEqual(r.summary, "Freed 0 MB (A). Skipped: C, D")
-    }
 }
